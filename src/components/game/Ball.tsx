@@ -3,7 +3,8 @@ import { useFrame } from '@react-three/fiber';
 import { Trail } from '@react-three/drei';
 import * as THREE from 'three';
 import { MLB_CONSTANTS } from '../../lib/constants';
-import { Pitch, PitchResult, Difficulty, TeamStats, BALL_START_POS } from '../../types/game';
+import type { Pitch, PitchResult, Difficulty, TeamStats } from '../../types/game';
+import { BALL_START_POS } from '../../types/game';
 
 interface BallProps {
     state: 'idle' | 'windup' | 'pitching' | 'flight' | 'result';
@@ -87,35 +88,57 @@ export function Ball({
                 const contactMod = teamStats.contact * 0.15;
                 const speedMod = teamStats.speed * 0.08;
 
-                const hrWindow = 18 * factor * (1 + powerMod - contactMod);
                 const perfectWindow = 12 * factor;
-                const singleWindow = 65 * factor * (1 + contactMod - powerMod * 0.5);
-
-                const isOutside = Math.abs(targetLocation.x) > 0.35 || targetLocation.y < 0.6 || targetLocation.y > 1.6;
-                const zonePenalty = isOutside ? 0.35 : 1.0;
-
+                const hrWindow = 20 * factor * (1 + powerMod - contactMod * 0.5);
                 const timingLabel = absTiming < perfectWindow ? 'PERFECT' : Math.abs(Math.round(timingDiff)) + 'MS ' + (timingDiff > 0 ? 'LATE' : 'EARLY');
 
+                const isOutside = Math.abs(targetLocation.x) > 0.35 || targetLocation.y < 0.6 || targetLocation.y > 1.6;
+                const zonePenalty = isOutside ? 0.4 : 1.0;
+
+                // 1. Calculate Spray Angle (Early = Pull, Late = Oppo)
+                const sprayAngleRad = (timingDiff / 160) * (Math.PI / 3.2); // ~50 degrees max spray
+
                 if (absTiming < hrWindow) {
-                    const hrChance = (0.5 + speedMod) * zonePenalty;
-                    if (roll < hrChance) {
-                        const qualityFactor = 1 - (absTiming / hrWindow);
-                        const ev = (110 + (qualityFactor * 12) + (powerMod * 12)) + (Math.random() * 5);
-                        const dist = 390 + (ev - 100) * 5 + (qualityFactor * 25);
-                        res = { status: 'hit', type: 'HOMERUN', timingOffset: timingDiff, timingLabel, exitVelocity: ev, launchAngle: 26 + (Math.random() * 4), distance: dist, pitchLocation: targetLocation, pitchType: pitch.type };
+                    // Barrel / Power Hit Zone
+                    const hrChance = (0.55 + powerMod - contactMod * 0.2) * zonePenalty;
+                    if (roll < hrChance && absTiming < 15 * factor) {
+                        // HOMERUN: High EV, 24-34 LA
+                        const ev = (103 + (powerMod * 10) + Math.random() * 12);
+                        const la = 24 + Math.random() * 10;
+                        const dist = (ev * 3.8) + (la - 25) * 2; // Simple dist formula
+                        res = { status: 'hit', type: 'HOMERUN', timingOffset: timingDiff, timingLabel, exitVelocity: ev, launchAngle: la, distance: dist, pitchLocation: targetLocation, pitchType: pitch.type };
                     } else {
-                        res = { status: 'hit', type: 'DOUBLE', timingOffset: timingDiff, timingLabel, exitVelocity: 108, launchAngle: 15 + (Math.random() * 6), pitchLocation: targetLocation, pitchType: pitch.type };
+                        // DOUBLE or HARD OUT: 10-25 LA, 98-108 EV
+                        const isGap = Math.abs(Math.abs(sprayAngleRad) - 0.4) < 0.2;
+                        if (roll < 0.7 + contactMod || isGap) {
+                            const ev = 98 + Math.random() * 10;
+                            const la = 12 + Math.random() * 15;
+                            res = { status: 'hit', type: 'DOUBLE', timingOffset: timingDiff, timingLabel, exitVelocity: ev, launchAngle: la, pitchLocation: targetLocation, pitchType: pitch.type };
+                        } else {
+                            res = { status: 'miss', type: 'OUT', timingOffset: timingDiff, timingLabel, exitVelocity: 102, launchAngle: 20, pitchLocation: targetLocation, pitchType: pitch.type };
+                        }
                     }
-                } else if (absTiming < 40 * factor) {
-                    const tripleChance = 0.35 + speedMod;
-                    if (roll < tripleChance) res = { status: 'hit', type: 'TRIPLE', timingOffset: timingDiff, timingLabel, exitVelocity: 104, launchAngle: 18 + (Math.random() * 4), pitchLocation: targetLocation, pitchType: pitch.type };
-                    else res = { status: 'hit', type: 'SINGLE', timingOffset: timingDiff, timingLabel, exitVelocity: 98, launchAngle: 10 + (Math.random() * 4), pitchLocation: targetLocation, pitchType: pitch.type };
-                } else if (absTiming < singleWindow) {
-                    const hitChance = (0.45 + (contactMod * 0.5)) * (isOutside ? 0.5 : 1.0);
-                    const outChance = powerMod * 0.3;
-                    if (roll < hitChance - outChance) res = { status: 'hit', type: 'SINGLE', timingOffset: timingDiff, timingLabel, exitVelocity: 92, launchAngle: 5 + (Math.random() * 5), pitchLocation: targetLocation, pitchType: pitch.type };
-                    else res = { status: 'miss', type: 'OUT', timingOffset: timingDiff, timingLabel, exitVelocity: 94, launchAngle: 10 + (Math.random() * 10), pitchLocation: targetLocation, pitchType: pitch.type };
-                } else if (absTiming < (strikes >= 2 ? 95 : 115) * factor) {
+                } else if (absTiming < 45 * factor) {
+                    // Line Drive Zone
+                    const tripleSpot = Math.abs(sprayAngleRad - 0.45) < 0.15 || Math.abs(sprayAngleRad + 0.45) < 0.15;
+                    if (roll < (0.15 + speedMod) && tripleSpot) {
+                        // TRIPLE: 15-25 LA, 95-105 EV
+                        res = { status: 'hit', type: 'TRIPLE', timingOffset: timingDiff, timingLabel, exitVelocity: 95 + Math.random() * 10, launchAngle: 15 + Math.random() * 10, pitchLocation: targetLocation, pitchType: pitch.type };
+                    } else if (roll < 0.6 + contactMod) {
+                        // SINGLE: 8-20 LA, 90-100 EV
+                        res = { status: 'hit', type: 'SINGLE', timingOffset: timingDiff, timingLabel, exitVelocity: 90 + Math.random() * 10, launchAngle: 8 + Math.random() * 12, pitchLocation: targetLocation, pitchType: pitch.type };
+                    } else {
+                        res = { status: 'miss', type: 'OUT', timingOffset: timingDiff, timingLabel, exitVelocity: 92, launchAngle: 15, pitchLocation: targetLocation, pitchType: pitch.type };
+                    }
+                } else if (absTiming < 85 * factor * (1 + contactMod)) {
+                    // Ground Ball / Bloop Zone
+                    if (roll < 0.4 + contactMod) {
+                        const isGrounder = roll < 0.5;
+                        res = { status: 'hit', type: 'SINGLE', timingOffset: timingDiff, timingLabel, exitVelocity: 85 + Math.random() * 10, launchAngle: isGrounder ? -5 + Math.random() * 10 : 25 + Math.random() * 15, pitchLocation: targetLocation, pitchType: pitch.type };
+                    } else {
+                        res = { status: 'miss', type: 'OUT', timingOffset: timingDiff, timingLabel, exitVelocity: 80, launchAngle: 10, pitchLocation: targetLocation, pitchType: pitch.type };
+                    }
+                } else if (absTiming < (strikes >= 2 ? 110 : 130) * factor) {
                     res = { status: 'foul', type: 'FOUL', timingOffset: timingDiff, timingLabel, pitchLocation: targetLocation, pitchType: pitch.type };
                 } else {
                     res = { status: 'miss', type: 'STRIKE', timingOffset: timingDiff, timingLabel, pitchLocation: targetLocation, pitchType: pitch.type };

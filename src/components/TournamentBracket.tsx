@@ -1,4 +1,3 @@
-import React from 'react';
 import type { TournamentState, Match, Team } from '../types/game';
 
 interface TournamentBracketProps {
@@ -7,7 +6,7 @@ interface TournamentBracketProps {
     onSimulateMatch: (matchId: string) => void;
 }
 
-const MatchNode = ({ match, teams, onPlay, onSimulate, currentUserId }: { match: Match, teams: Team[], onPlay: (id: string) => void, onSimulate: (id: string) => void, currentUserId: string }) => {
+const MatchNode = ({ match, teams, onPlay, onSimulate }: { match: Match, teams: Team[], onPlay: (id: string) => void, onSimulate: (id: string) => void, currentUserId: string }) => {
     const team1 = teams.find(t => t.id === match.team1Id);
     const team2 = teams.find(t => t.id === match.team2Id);
 

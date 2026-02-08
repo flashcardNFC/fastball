@@ -1,5 +1,4 @@
-import React from 'react';
-import { TeamStats } from '../types/game';
+import type { TeamStats } from '../types/game';
 
 interface TeamCreationUIProps {
     teamStats: TeamStats;
