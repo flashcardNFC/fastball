@@ -12,6 +12,7 @@ import { Stadium } from './game/Stadium';
 import { StrikeZone } from './game/StrikeZone';
 import { HomePlate } from './game/HomePlate';
 import { Camera } from './game/Camera';
+import { PCI } from './game/PCI';
 
 // Components - UI
 import { GlassCardUI } from './ui/GlassCard';
@@ -51,6 +52,7 @@ export default function BaseballGame() {
     });
     const [showLeaderboard, setShowLeaderboard] = useState(false);
     const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
+    const [pciPosition, setPciPosition] = useState({ x: 0, y: 1.1 });
 
     const pitchStartTime = useRef<number>(0);
     const swingRef = useRef<number | null>(null);
@@ -61,6 +63,39 @@ export default function BaseballGame() {
         window.addEventListener('resize', handleResize);
         return () => window.removeEventListener('resize', handleResize);
     }, []);
+
+    // PCI Movement Control
+    useEffect(() => {
+        const handleMove = (e: MouseEvent | TouchEvent) => {
+            if (!gameStarted || machineState === 'flight') return;
+
+            let clientX, clientY;
+            if ('touches' in e) {
+                clientX = e.touches[0].clientX;
+                clientY = e.touches[0].clientY;
+            } else {
+                clientX = e.clientX;
+                clientY = e.clientY;
+            }
+
+            // Convert screen space to strike zone space (-0.6 to 0.6 horizontally, 0.4 to 1.8 vertically)
+            const x = (clientX / window.innerWidth - 0.5) * 2.0;
+            const y = (1 - clientY / window.innerHeight) * 2.5;
+
+            // Clamp positions
+            setPciPosition({
+                x: Math.max(-0.8, Math.min(0.8, x)),
+                y: Math.max(0.2, Math.min(2.0, y))
+            });
+        };
+
+        window.addEventListener('mousemove', handleMove);
+        window.addEventListener('touchmove', handleMove);
+        return () => {
+            window.removeEventListener('mousemove', handleMove);
+            window.removeEventListener('touchmove', handleMove);
+        };
+    }, [gameStarted, machineState]);
 
     // Persistence & Init
     useEffect(() => {
@@ -237,11 +272,14 @@ export default function BaseballGame() {
     // --- Inputs ---
     useEffect(() => {
         const k = (e: KeyboardEvent) => { if (e.code === 'Space') handleSwing(); if (e.code === 'Enter') startPitch(); };
-        const m = (e: MouseEvent) => { if ((e.target as HTMLElement).tagName !== 'BUTTON') handleSwing(); };
+        const m = (e: MouseEvent) => {
+            if (machineState === 'idle' && gameStarted) { startPitch(); return; }
+            if ((e.target as HTMLElement).tagName !== 'BUTTON') handleSwing();
+        };
         const t = (e: TouchEvent) => { if ((e.target as HTMLElement).tagName !== 'BUTTON') { if (e.touches.length > 1) e.preventDefault(); handleSwing(); } };
         window.addEventListener('keydown', k); window.addEventListener('mousedown', m); window.addEventListener('touchstart', t, { passive: false });
         return () => { window.removeEventListener('keydown', k); window.removeEventListener('mousedown', m); window.removeEventListener('touchstart', t); };
-    }, [handleSwing, startPitch]);
+    }, [handleSwing, startPitch, machineState, gameStarted]);
 
     // --- Render ---
     return (
@@ -320,7 +358,9 @@ export default function BaseballGame() {
                         difficulty={difficulty}
                         teamStats={teamStats}
                         strikes={gameState.strikes}
+                        pciPosition={pciPosition}
                     />
+                    <PCI position={pciPosition} />
                     <Bat swingTime={visualSwingTime} />
                 </Canvas>
             </div>
