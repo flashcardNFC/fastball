@@ -41,7 +41,7 @@ export default function BaseballGame() {
     const [visualSwingTime, setVisualSwingTime] = useState<number | null>(null);
     const [difficulty, setDifficulty] = useState<Difficulty>('PRO');
     const [gameStarted, setGameStarted] = useState(false);
-    const [teamStats, setTeamStats] = useState<TeamStats>({ name: '', speed: 0, contact: 0, power: 0 });
+    const [teamStats, setTeamStats] = useState<TeamStats>({ name: '', speed: 0, contact: 0, power: 0, handedness: 'LEFT' });
     const [showTeamCreation, setShowTeamCreation] = useState(true);
     const [opponentTeam, setOpponentTeam] = useState<TeamStats | null>(null);
     const [tournament, setTournament] = useState<TournamentState | null>(null);
@@ -56,6 +56,8 @@ export default function BaseballGame() {
 
     const pitchStartTime = useRef<number>(0);
     const swingRef = useRef<number | null>(null);
+    const touchStartPos = useRef<{ x: number, y: number } | null>(null);
+    const pciStartPos = useRef<{ x: number, y: number } | null>(null);
 
     // --- Effects ---
     useEffect(() => {
@@ -64,8 +66,21 @@ export default function BaseballGame() {
         return () => window.removeEventListener('resize', handleResize);
     }, []);
 
+    const pciRef = useRef(pciPosition);
+    useEffect(() => { pciRef.current = pciPosition; }, [pciPosition]);
+
     // PCI Movement Control
     useEffect(() => {
+        const handleStart = (e: MouseEvent | TouchEvent) => {
+            if (!gameStarted || machineState === 'flight') return;
+
+            const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
+            const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY;
+
+            touchStartPos.current = { x: clientX, y: clientY };
+            pciStartPos.current = { ...pciRef.current };
+        };
+
         const handleMove = (e: MouseEvent | TouchEvent) => {
             if (!gameStarted || machineState === 'flight') return;
 
@@ -78,24 +93,50 @@ export default function BaseballGame() {
                 clientY = e.clientY;
             }
 
-            // Convert screen space to strike zone space (-0.6 to 0.6 horizontally, 0.4 to 1.8 vertically)
-            const x = (clientX / window.innerWidth - 0.5) * 2.0;
-            const y = (1 - clientY / window.innerHeight) * 2.5;
+            if (isMobile) {
+                if (touchStartPos.current && pciStartPos.current) {
+                    // Relative movement for mobile to prevent thumb blocking vision
+                    // Higher sensitivity: multipliers increased to 2.5 and 3.5
+                    const dx = (clientX - touchStartPos.current.x) / window.innerWidth * 2.5;
+                    const dy = (touchStartPos.current.y - clientY) / window.innerHeight * 3.5;
 
-            // Clamp positions
-            setPciPosition({
-                x: Math.max(-0.8, Math.min(0.8, x)),
-                y: Math.max(0.2, Math.min(2.0, y))
-            });
+                    setPciPosition({
+                        x: Math.max(-0.8, Math.min(0.8, pciStartPos.current.x + dx)),
+                        y: Math.max(0.2, Math.min(2.0, pciStartPos.current.y + dy))
+                    });
+                }
+            } else {
+                // Direct following for desktop
+                const x = (clientX / window.innerWidth - 0.5) * 2.0;
+                const y = (1 - clientY / window.innerHeight) * 2.5;
+                setPciPosition({
+                    x: Math.max(-0.8, Math.min(0.8, x)),
+                    y: Math.max(0.2, Math.min(2.0, y))
+                });
+            }
         };
 
+        const handleEnd = () => {
+            touchStartPos.current = null;
+            pciStartPos.current = null;
+        };
+
+        window.addEventListener('mousedown', handleStart);
+        window.addEventListener('touchstart', handleStart);
         window.addEventListener('mousemove', handleMove);
         window.addEventListener('touchmove', handleMove);
+        window.addEventListener('mouseup', handleEnd);
+        window.addEventListener('touchend', handleEnd);
+
         return () => {
+            window.removeEventListener('mousedown', handleStart);
+            window.removeEventListener('touchstart', handleStart);
             window.removeEventListener('mousemove', handleMove);
             window.removeEventListener('touchmove', handleMove);
+            window.removeEventListener('mouseup', handleEnd);
+            window.removeEventListener('touchend', handleEnd);
         };
-    }, [gameStarted, machineState]);
+    }, [gameStarted, machineState, isMobile]);
 
     // Persistence & Init
     useEffect(() => {
@@ -166,6 +207,16 @@ export default function BaseballGame() {
         }, 1200);
     }, [gameState.gameOver, machineState, gameStarted, difficulty]);
 
+    // Automatic Pitching
+    useEffect(() => {
+        if (machineState === 'idle' && gameStarted && gameState.isTop && !gameState.gameOver && !showBracket && !showLeaderboard && !showTeamCreation) {
+            const timer = setTimeout(() => {
+                startPitch();
+            }, 2500);
+            return () => clearTimeout(timer);
+        }
+    }, [machineState, gameStarted, gameState.isTop, gameState.gameOver, showBracket, showLeaderboard, showTeamCreation, startPitch]);
+
     const handleSwing = useCallback(() => {
         if (!gameStarted || machineState !== 'pitching' || visualSwingTime !== null) return;
         swingRef.current = performance.now();
@@ -185,45 +236,48 @@ export default function BaseballGame() {
 
     const processResult = (result: PitchResult) => {
         setGameState(prev => {
-            let { inning, isTop, outs, balls, strikes, score, runners } = { ...prev };
-            let r = [...runners] as [boolean, boolean, boolean];
+            const next = {
+                ...prev,
+                score: { ...prev.score },
+                runners: [...prev.runners] as [boolean, boolean, boolean]
+            };
             let runs = 0;
 
             if (result.type === 'BALL') {
-                balls++;
-                if (balls === 4) {
-                    const walk = advanceRunners(r, 'SINGLE');
-                    r = walk.runners as [boolean, boolean, boolean];
+                next.balls++;
+                if (next.balls === 4) {
+                    const walk = advanceRunners(next.runners, 'SINGLE');
+                    next.runners = walk.runners as [boolean, boolean, boolean];
                     runs += walk.runs;
-                    balls = 0; strikes = 0;
+                    next.balls = 0; next.strikes = 0;
                 }
             } else if (result.type === 'STRIKE' || result.type === 'FOUL') {
-                if (result.type === 'STRIKE' || strikes < 2) strikes++;
-                if (strikes === 3) { outs++; strikes = 0; balls = 0; }
+                if (result.type === 'STRIKE' || next.strikes < 2) next.strikes++;
+                if (next.strikes === 3) { next.outs++; next.strikes = 0; next.balls = 0; }
             } else if (result.type === 'OUT') {
-                outs++; strikes = 0; balls = 0;
+                next.outs++; next.strikes = 0; next.balls = 0;
             } else if (result.status === 'hit') {
-                const hit = advanceRunners(r, result.type as any);
-                r = hit.runners as [boolean, boolean, boolean];
+                const hit = advanceRunners(next.runners, result.type as any);
+                next.runners = hit.runners as [boolean, boolean, boolean];
                 runs += hit.runs;
-                strikes = 0; balls = 0;
+                next.strikes = 0; next.balls = 0;
                 if (result.type === 'HOMERUN') setPlayerStats(s => ({ ...s, homeRuns: s.homeRuns + 1 }));
                 setPlayerStats(s => ({ ...s, hits: s.hits + 1, atBats: s.atBats + 1 }));
             }
 
-            if (result.type === 'OUT' || strikes === 3) setPlayerStats(s => ({ ...s, atBats: s.atBats + 1 }));
+            if (result.type === 'OUT' || next.strikes === 3) setPlayerStats(s => ({ ...s, atBats: s.atBats + 1 }));
 
-            if (isTop) score.player += runs; else score.computer += runs;
+            if (next.isTop) next.score.player += runs; else next.score.computer += runs;
 
-            if (outs === 3) {
-                if (!isTop && inning === 9) return { ...prev, score, runners: [false, false, false], gameOver: true };
-                isTop = !isTop;
-                outs = 0; balls = 0; strikes = 0;
-                r = [false, false, false];
-                if (isTop) inning++;
+            if (next.outs === 3) {
+                if (!next.isTop && next.inning === 9) return { ...next, runners: [false, false, false], gameOver: true };
+                next.isTop = !next.isTop;
+                next.outs = 0; next.balls = 0; next.strikes = 0;
+                next.runners = [false, false, false];
+                if (next.isTop) next.inning++;
             }
 
-            return { ...prev, inning, isTop, outs, balls, strikes, score, runners: r as any, gameOver: false };
+            return { ...next, gameOver: false };
         });
         setMachineState('idle');
     };
@@ -257,28 +311,53 @@ export default function BaseballGame() {
 
     const simulateInning = () => {
         setGameState(prev => {
-            let { inning, isTop, outs, score } = { ...prev };
+            const next = {
+                ...prev,
+                score: { ...prev.score },
+                runners: [false, false, false] as [boolean, boolean, boolean],
+                balls: 0,
+                strikes: 0
+            };
             const cpuRuns = Math.floor(Math.random() * 2) + (opponentTeam?.power || 1) * 0.3;
             const runsWon = Math.round(cpuRuns);
-            if (!isTop) score.computer += runsWon; else score.player += runsWon;
 
-            if (!isTop && inning === 9) return { ...prev, score, gameOver: true };
-            isTop = !isTop; outs = 0;
-            if (isTop) inning++;
-            return { ...prev, inning, isTop, outs, score };
+            if (!next.isTop) next.score.computer += runsWon; else next.score.player += runsWon;
+
+            if (!next.isTop && next.inning === 9) return { ...next, gameOver: true };
+
+            next.isTop = !next.isTop;
+            next.outs = 0;
+            if (next.isTop) next.inning++;
+            return next;
         });
     };
 
     // --- Inputs ---
     useEffect(() => {
         const k = (e: KeyboardEvent) => { if (e.code === 'Space') handleSwing(); if (e.code === 'Enter') startPitch(); };
-        const m = (e: MouseEvent) => {
-            if (machineState === 'idle' && gameStarted) { startPitch(); return; }
-            if ((e.target as HTMLElement).tagName !== 'BUTTON') handleSwing();
+        const onDown = (e: MouseEvent | TouchEvent) => {
+            if ((e.target as HTMLElement).tagName === 'BUTTON') return;
+            if ('touches' in e && e.touches.length > 1) e.preventDefault();
+            if (machineState === 'idle' && gameStarted) startPitch();
         };
-        const t = (e: TouchEvent) => { if ((e.target as HTMLElement).tagName !== 'BUTTON') { if (e.touches.length > 1) e.preventDefault(); handleSwing(); } };
-        window.addEventListener('keydown', k); window.addEventListener('mousedown', m); window.addEventListener('touchstart', t, { passive: false });
-        return () => { window.removeEventListener('keydown', k); window.removeEventListener('mousedown', m); window.removeEventListener('touchstart', t); };
+        const onUp = (e: MouseEvent | TouchEvent) => {
+            if ((e.target as HTMLElement).tagName === 'BUTTON') return;
+            handleSwing();
+        };
+
+        window.addEventListener('keydown', k);
+        window.addEventListener('mousedown', onDown);
+        window.addEventListener('mouseup', onUp);
+        window.addEventListener('touchstart', onDown, { passive: false });
+        window.addEventListener('touchend', onUp);
+
+        return () => {
+            window.removeEventListener('keydown', k);
+            window.removeEventListener('mousedown', onDown);
+            window.removeEventListener('mouseup', onUp);
+            window.removeEventListener('touchstart', onDown);
+            window.removeEventListener('touchend', onUp);
+        };
     }, [handleSwing, startPitch, machineState, gameStarted]);
 
     // --- Render ---
@@ -342,8 +421,14 @@ export default function BaseballGame() {
             <div style={{ position: 'absolute', inset: 0 }}>
                 <Canvas shadows>
                     <Camera isUserPitching={!gameState.isTop} />
-                    <ambientLight intensity={0.5} />
-                    <pointLight position={[0, 5, 2]} intensity={20} distance={15} color="#fff" />
+                    <ambientLight intensity={1.2} />
+                    <directionalLight
+                        position={[10, 50, 10]}
+                        intensity={2.5}
+                        castShadow
+                        shadow-mapSize={[2048, 2048]}
+                    />
+                    <pointLight position={[0, 8, 5]} intensity={50} distance={25} color="#fff" />
                     <Stars radius={300} count={1000} factor={4} fade speed={1} />
                     <Stadium machineState={machineState} windupStartTime={windupStartTime} />
                     <HomePlate />
@@ -361,7 +446,7 @@ export default function BaseballGame() {
                         pciPosition={pciPosition}
                     />
                     <PCI position={pciPosition} />
-                    <Bat swingTime={visualSwingTime} />
+                    <Bat swingTime={visualSwingTime} handedness={teamStats.handedness || 'LEFT'} pciPosition={pciPosition} />
                 </Canvas>
             </div>
 
@@ -370,7 +455,7 @@ export default function BaseballGame() {
 
             {showBracket && tournament && <div style={{ position: 'absolute', inset: 0, zIndex: 400 }}><TournamentBracket tournament={tournament} onPlayMatch={(matchId) => { const m = tournament.matches.find((x: Match) => x.id === matchId); if (m) { const oppId = m.team1Id === 'user' ? m.team2Id : m.team1Id; const opp = tournament.teams.find((t: Team) => t.id === oppId); setOpponentTeam(opp ? { ...opp.stats, name: opp.name } : null); setGameState({ ...gameState, inning: 1, isTop: true, outs: 0, score: { player: 0, computer: 0 }, runners: [false, false, false], gameOver: false }); setGameStarted(true); setShowBracket(false); } }} onSimulateMatch={(matchId: string) => { setTournament((prev: any) => { if (!prev) return null; const m = prev.matches.find((x: Match) => x.id === matchId); if (!m || !m.team1Id || !m.team2Id) return prev; const t1 = prev.teams.find((t: Team) => t.id === m.team1Id); const t2 = prev.teams.find((t: Team) => t.id === m.team2Id); const result = simulateOutcome(m, t1, t2); const updated = prev.matches.map((x: Match) => x.id === matchId ? { ...x, winnerId: result.winnerId, score: result.score } : x); const final = updated.map((match: Match) => { if (match.id === m.nextMatchId) { if (!match.team1Id) return { ...match, team1Id: result.winnerId }; if (!match.team2Id) return { ...match, team2Id: result.winnerId }; } if (match.id === m.loserMatchId) { const loserId = result.winnerId === m.team1Id ? m.team2Id : m.team1Id; if (!match.team1Id) return { ...match, team1Id: loserId }; if (!match.team2Id) return { ...match, team2Id: loserId }; } return match; }); return { ...prev, matches: final }; }); }} /></div>}
 
-            {!gameStarted && !showTeamCreation && <StartScreen isMobile={isMobile} difficulty={difficulty} setDifficulty={setDifficulty} gameState={gameState} setGameState={setGameState} gameStarted={gameStarted} setGameStarted={setGameStarted} setPitchResult={setPitchResult} teamStats={teamStats} generateTournament={generateTournament} setTournament={setTournament} setShowBracket={setShowBracket} setShowLeaderboard={setShowLeaderboard} />}
+            {!gameStarted && !showTeamCreation && <StartScreen isMobile={isMobile} difficulty={difficulty} setDifficulty={setDifficulty} gameState={gameState} setGameState={setGameState} gameStarted={gameStarted} setGameStarted={setGameStarted} setPitchResult={setPitchResult} teamStats={teamStats} generateTournament={generateTournament} setTournament={setTournament} setShowBracket={setShowBracket} setShowLeaderboard={setShowLeaderboard} onEditTeam={() => setShowTeamCreation(true)} />}
 
             {!gameState.isTop && machineState === 'idle' && !gameState.gameOver && gameStarted && <div style={{ position: 'absolute', bottom: '10%', left: '50%', transform: 'translateX(-50%)', zIndex: 100 }}><button onClick={simulateInning} style={{ padding: '16px 32px', backgroundColor: 'rgba(255,255,255,0.1)', backdropFilter: 'blur(20px)', color: '#fff', border: '1px solid rgba(255,255,255,0.2)', borderRadius: '16px', fontWeight: 900, cursor: 'pointer' }}>SIMULATE INNING</button></div>}
 

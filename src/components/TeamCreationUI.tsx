@@ -42,6 +42,33 @@ export default function TeamCreationUI({ teamStats, setTeamStats, onContinue }: 
                 </div>
             </div>
 
+            {/* Handedness Selection */}
+            <div style={{ marginBottom: '30px' }}>
+                <div style={{ fontSize: '14px', color: 'rgba(255,255,255,0.6)', marginBottom: '12px', textAlign: 'center', fontWeight: 900, letterSpacing: '0.1em' }}>BATTER HANDEDNESS</div>
+                <div style={{ display: 'flex', gap: '10px' }}>
+                    {(['LEFT', 'RIGHT'] as const).map(h => (
+                        <button
+                            key={h}
+                            onClick={() => setTeamStats({ ...teamStats, handedness: h })}
+                            style={{
+                                flex: 1,
+                                padding: '12px',
+                                backgroundColor: (teamStats.handedness || 'LEFT') === h ? '#3b82f6' : 'rgba(255,255,255,0.05)',
+                                color: '#fff',
+                                border: '1px solid rgba(255,255,255,0.1)',
+                                borderRadius: '8px',
+                                fontWeight: 900,
+                                cursor: 'pointer',
+                                transition: 'all 0.2s',
+                                transform: (teamStats.handedness || 'LEFT') === h ? 'scale(1.05)' : 'none'
+                            }}
+                        >
+                            {h}
+                        </button>
+                    ))}
+                </div>
+            </div>
+
             {[
                 { key: 'speed' as const, label: 'SPEED', desc: 'Extra base hits', color: '#3b82f6' },
                 { key: 'contact' as const, label: 'CONTACT', desc: 'More singles, fewer HRs', color: '#10b981' },

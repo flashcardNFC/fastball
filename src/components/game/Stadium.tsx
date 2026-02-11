@@ -45,24 +45,29 @@ function Pitcher({ machineState, windupStartTime }: { machineState: string, wind
 
     return (
         <group ref={groupRef} position={[0, 0.15, -MLB_CONSTANTS.DISTANCE_MOUND_TO_PLATE - 0.3]}>
+            {/* Torso */}
             <mesh position={[0, 1.1, 0]}>
-                <capsuleGeometry args={[0.2, 0.8, 4, 8]} />
-                <meshStandardMaterial color="#222" roughness={0.5} />
+                <capsuleGeometry args={[0.22, 0.8, 4, 8]} />
+                <meshStandardMaterial color="#1a1a1a" roughness={0.5} />
             </mesh>
+            {/* Head */}
             <mesh position={[0, 1.8, 0]}>
                 <sphereGeometry args={[0.18, 16, 16]} />
-                <meshStandardMaterial color="#333" />
+                <meshStandardMaterial color="#222" />
             </mesh>
-            <mesh position={[-0.1, 0.4, 0]}>
-                <capsuleGeometry args={[0.08, 0.8, 4, 8]} />
+            {/* Plant Leg (Left Leg for a Lefty) */}
+            <mesh position={[0.12, 0.4, 0]}>
+                <capsuleGeometry args={[0.09, 0.8, 4, 8]} />
                 <meshStandardMaterial color="#111" />
             </mesh>
-            <group ref={legRef} position={[0.12, 0.4, 0]}>
+            {/* Kick Leg (Right Leg for a Lefty) */}
+            <group ref={legRef} position={[-0.12, 0.4, 0]}>
                 <mesh position={[0, 0, 0]}>
-                    <capsuleGeometry args={[0.08, 0.8, 4, 8]} />
+                    <capsuleGeometry args={[0.09, 0.8, 4, 8]} />
                     <meshStandardMaterial color="#111" />
                 </mesh>
             </group>
+            {/* Throwing Arm (Left Arm) */}
             <group ref={armRef} position={[0.25, 1.5, 0]}>
                 <mesh position={[0, -0.3, 0]}>
                     <capsuleGeometry args={[0.07, 0.6, 4, 8]} />
@@ -76,17 +81,37 @@ function Pitcher({ machineState, windupStartTime }: { machineState: string, wind
 function LightTower({ position }: { position: [number, number, number] }) {
     return (
         <group position={position}>
+            {/* Tower Structure */}
             <mesh position={[0, 15, 0]}>
-                <boxGeometry args={[0.5, 30, 0.5]} />
-                <meshStandardMaterial color="#222" metalness={0.8} />
+                <boxGeometry args={[0.8, 30, 0.8]} />
+                <meshStandardMaterial color="#1a1a1a" metalness={0.9} roughness={0.1} />
             </mesh>
-            <group position={[0, 28, 1]}>
-                {[0, 1, 2, 3, 4, 5, 6, 7, 8].map((i) => (
-                    <mesh key={i} position={[(i % 3 - 1) * 0.8, (Math.floor(i / 3) - 1) * 0.8, 0]}>
-                        <planeGeometry args={[0.6, 0.6]} />
-                        <meshBasicMaterial color="#fff" transparent opacity={0.9} />
+
+            {/* Light Panel */}
+            <group position={[0, 28, position[2] > 0 ? -1.2 : 1.2]} rotation={[Math.PI / 8, position[0] > 0 ? Math.PI / 4 : -Math.PI / 4, 0]}>
+                <mesh>
+                    <boxGeometry args={[4, 3, 0.5]} />
+                    <meshStandardMaterial color="#222" />
+                </mesh>
+
+                {/* Light Bulbs Cluster */}
+                {[...Array(12)].map((_, i) => (
+                    <mesh key={i} position={[(i % 4 - 1.5) * 0.9, (Math.floor(i / 4) - 1) * 0.9, 0.3]}>
+                        <planeGeometry args={[0.7, 0.7]} />
+                        <meshBasicMaterial color="#fff" />
                     </mesh>
                 ))}
+
+                {/* Actual Light Source */}
+                <spotLight
+                    position={[0, 0, 0.5]}
+                    angle={0.8}
+                    penumbra={0.5}
+                    intensity={150}
+                    distance={150}
+                    color="#fff"
+                    castShadow
+                />
             </group>
         </group>
     );
@@ -162,25 +187,57 @@ export function Stadium({ machineState, windupStartTime }: { machineState: strin
             <LightTower position={[45, 0, 20]} />
             <LightTower position={[-45, 0, 20]} />
 
-            <group position={[0, -0.05, 0]}>
-                <mesh rotation={[-Math.PI / 2, 0, Math.PI / 4]} position={[25, 0, -25]}>
-                    <planeGeometry args={[0.2, 120]} />
-                    <meshBasicMaterial color="#fff" transparent opacity={0.6} />
+            {/* Infield Grass Island */}
+            <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.085, -28]} receiveShadow>
+                <circleGeometry args={[20, 64]} />
+                <meshStandardMaterial color="#1a3c1a" roughness={1} />
+            </mesh>
+
+            {/* Foul Lines */}
+            <group position={[0, 0.01, 0]}>
+                {/* 1st Base Line (Starts at outer top corner of right box: 1.1, -0.6) */}
+                <mesh rotation={[-Math.PI / 2, 0, -Math.PI / 4]} position={[36.45, -0.08, -35.95]}>
+                    <planeGeometry args={[0.12, 100]} />
+                    <meshBasicMaterial color="#ffffff" transparent opacity={0.9} />
                 </mesh>
-                <mesh rotation={[-Math.PI / 2, 0, -Math.PI / 4]} position={[-25, 0, -25]}>
-                    <planeGeometry args={[0.2, 120]} />
-                    <meshBasicMaterial color="#fff" transparent opacity={0.6} />
+                {/* 3rd Base Line (Starts at outer top corner of left box: -1.1, -0.6) */}
+                <mesh rotation={[-Math.PI / 2, 0, Math.PI / 4]} position={[-36.45, -0.08, -35.95]}>
+                    <planeGeometry args={[0.12, 100]} />
+                    <meshBasicMaterial color="#ffffff" transparent opacity={0.9} />
                 </mesh>
             </group>
 
-            <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0.6, -0.07, 0]}>
-                <planeGeometry args={[0.8, 1.2]} />
-                <meshBasicMaterial color="#fff" transparent opacity={0.1} />
-            </mesh>
-            <mesh rotation={[-Math.PI / 2, 0, 0]} position={[-0.6, -0.07, 0]}>
-                <planeGeometry args={[0.8, 1.2]} />
-                <meshBasicMaterial color="#fff" transparent opacity={0.1} />
-            </mesh>
+            {/* Batter's Boxes with Weathered Chalk */}
+            <group position={[0, -0.07, 0]}>
+                {[0.7, -0.7].map((side) => (
+                    <group key={side} position={[side, 0, 0]}>
+                        {/* Worn Center Area */}
+                        <mesh rotation={[-Math.PI / 2, 0, 0]}>
+                            <planeGeometry args={[0.8, 1.2]} />
+                            <meshBasicMaterial color="#fff" transparent opacity={0.05} />
+                        </mesh>
+
+                        {/* Chalk Outlines (Weathered/Incomplete) */}
+                        <group position={[0, 0.001, 0]}>
+                            {/* Top/Bottom Lines */}
+                            {[0.6, -0.6].map((z) => (
+                                <mesh key={z} rotation={[-Math.PI / 2, 0, 0]} position={[0, 0, z]}>
+                                    <planeGeometry args={[0.82, 0.05]} />
+                                    <meshBasicMaterial color="#ffffff" transparent opacity={0.4} />
+                                </mesh>
+                            ))}
+                            {/* Side Lines */}
+                            {[0.4, -0.4].map((x) => (
+                                <mesh key={x} rotation={[-Math.PI / 2, 0, 0]} position={[x, 0, 0]}>
+                                    <planeGeometry args={[0.05, 1.25]} />
+                                    <meshBasicMaterial color="#ffffff" transparent opacity={0.4} />
+                                </mesh>
+                            ))}
+
+                        </group>
+                    </group>
+                ))}
+            </group>
         </group>
     );
 }

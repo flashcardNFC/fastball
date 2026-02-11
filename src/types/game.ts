@@ -65,6 +65,7 @@ export interface TeamStats {
     speed: number;
     contact: number;
     power: number;
+    handedness?: 'LEFT' | 'RIGHT';
 }
 
 export interface PlayerStats {

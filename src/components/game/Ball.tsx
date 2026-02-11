@@ -185,7 +185,13 @@ export function Ball({
         const speedMs = (res.exitVelocity! * MLB_CONSTANTS.MPH_TO_MS);
         const angleRad = (res.launchAngle! * Math.PI) / 180;
         const timing = res.timingOffset || 0;
-        const sprayAngle = (timing / 150) * (Math.PI / 3.5);
+
+        // Handedness multiplier for spray angle
+        // Righty: Early (<0) is Left Field (<0), Late (>0) is Right Field (>0)
+        // Lefty: Early (<0) is Right Field (>0), Late (>0) is Left Field (<0)
+        const sideMult = (teamStats.handedness === 'RIGHT') ? 1 : -1;
+        const sprayAngle = (timing / 150) * (Math.PI / 3.5) * sideMult;
+
         flightData.current = {
             startTime: performance.now(),
             v0: new THREE.Vector3(

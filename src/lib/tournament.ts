@@ -69,12 +69,7 @@ export const generateTournament = (userTeamStats: any): TournamentState => {
     const shuffledColors = [...COLORS].sort(() => 0.5 - Math.random());
 
     for (let i = 0; i < 7; i++) {
-        // Random Stats
-        const speed = Math.floor(Math.random() * 6);
-        const contact = Math.floor(Math.random() * (6 - speed)); // Keep somewhat balanced? Or just random 0-5
-        const power = 5 - speed - contact; // Try to adhere to the 5 point limit logic or just randomize 0-5 per stat?
-        // Let's make AI teams valid (sum <= 5-8?) Or just make them decent.
-        // Let's go with 0-5 per stat, sum around 5-8 to be competitive.
+        // Let's make AI teams valid (sum around 5-8 to be competitive)
         const s = Math.floor(Math.random() * 4) + 1;
         const c = Math.floor(Math.random() * 4) + 1;
         const p = Math.floor(Math.random() * 4) + 1;
@@ -92,16 +87,6 @@ export const generateTournament = (userTeamStats: any): TournamentState => {
     const seeding = [...teams].sort(() => 0.5 - Math.random());
 
     // 2. Generate Bracket Matches (8 Team Double Elimination)
-    // Structure:
-    // WB R1: W1(1v2), W2(3v4), W3(5v6), W4(7v8)
-    // LB R1: L1(Loser W1 v Loser W2), L2(Loser W3 v Loser W4)
-    // WB R2: W5(Win W1 v Win W2), W6(Win W3 v Win W4)
-    // LB R2: L3(Win L1 v Loser W6), L4(Win L2 v Loser W5)
-    // LB R3: L5(Win L3 v Win L4)
-    // WB R3: W7(Win W5 v Win W6) -> Winner to Grand Final
-    // LB R4: L6(Win L5 v Loser W7) -> Winner to Grand Final
-    // GF:    F1(Win W7 v Win L6)
-
     const matches: Match[] = [];
     const createMatch = (id: string, round: number, bracket: 'winners' | 'losers' | 'finals', nextWinner?: string, nextLoser?: string): Match => ({
         id, round, bracket, team1Id: null, team2Id: null, winnerId: null, score: null, nextMatchId: nextWinner, loserMatchId: nextLoser
@@ -150,7 +135,7 @@ export const generateTournament = (userTeamStats: any): TournamentState => {
     };
 };
 
-export const simulateOutcome = (match: Match, team1: Team, team2: Team): { winnerId: string, score: { t1: number, t2: number } } => {
+export const simulateOutcome = (_match: Match, team1: Team, team2: Team): { winnerId: string, score: { t1: number, t2: number } } => {
     // Simple simulation based on stats + randomness
     const t1Score = Math.floor(Math.random() * 5) + (team1.stats.power * 0.5);
     const t2Score = Math.floor(Math.random() * 5) + (team2.stats.power * 0.5);

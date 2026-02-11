@@ -7,5 +7,15 @@ export default defineConfig({
   server: {
     host: true,
     allowedHosts: true
+  },
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          'vendor-three': ['three', '@react-three/fiber', '@react-three/drei'],
+          'vendor-react': ['react', 'react-dom']
+        }
+      }
+    }
   }
 })

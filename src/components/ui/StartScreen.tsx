@@ -1,5 +1,5 @@
-import React from 'react';
-import { Difficulty, TeamStats, GameState, TournamentState } from '../../types/game';
+
+import type { Difficulty, TeamStats, GameState, TournamentState } from '../../types/game';
 
 interface StartScreenProps {
     isMobile: boolean;
@@ -15,6 +15,7 @@ interface StartScreenProps {
     setTournament: (t: TournamentState) => void;
     setShowBracket: (s: boolean) => void;
     setShowLeaderboard: (s: boolean) => void;
+    onEditTeam: () => void;
 }
 
 export function StartScreen({
@@ -29,7 +30,8 @@ export function StartScreen({
     generateTournament,
     setTournament,
     setShowBracket,
-    setShowLeaderboard
+    setShowLeaderboard,
+    onEditTeam
 }: StartScreenProps) {
     return (
         <div style={{
@@ -47,6 +49,8 @@ export function StartScreen({
             overflowY: 'auto'
         }}>
             <div
+                onClick={onEditTeam}
+                className="account-badge"
                 style={{
                     position: isMobile ? 'relative' : 'absolute',
                     top: isMobile ? 'auto' : '40px',
@@ -59,7 +63,10 @@ export function StartScreen({
                     padding: '10px 20px',
                     borderRadius: '100px',
                     border: '1px solid rgba(255,255,255,0.1)',
-                    animation: 'fadeInDown 0.6s'
+                    animation: 'fadeInDown 0.6s',
+                    cursor: 'pointer',
+                    transition: 'all 0.2s',
+                    pointerEvents: 'auto'
                 }}
             >
                 <div style={{
@@ -77,7 +84,9 @@ export function StartScreen({
                     {teamStats.name ? teamStats.name[0].toUpperCase() : '?'}
                 </div>
                 <div style={{ textAlign: 'left' }}>
-                    <div style={{ fontSize: '10px', fontWeight: 900, opacity: 0.5, letterSpacing: '0.1em' }}>{teamStats.name ? 'AUTHENTICATED' : 'GUEST MODE'}</div>
+                    <div style={{ fontSize: '10px', fontWeight: 900, opacity: 0.5, letterSpacing: '0.1em' }}>
+                        {teamStats.name ? 'AUTHENTICATED' : 'GUEST MODE'} • {teamStats.handedness || 'LEFT'}
+                    </div>
                     <div style={{ fontSize: '14px', fontWeight: 800, color: teamStats.name ? '#fff' : 'rgba(255,255,255,0.6)' }}>{teamStats.name || 'Sign In to Sync'}</div>
                 </div>
             </div>
