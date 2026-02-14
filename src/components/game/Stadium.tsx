@@ -47,7 +47,7 @@ const PANEL_MAT = new THREE.MeshStandardMaterial({ color: "#111", metalness: 0.8
 const GLOW_MAT = new THREE.MeshBasicMaterial({ color: "#ffffff", transparent: true, opacity: 0.15, blending: THREE.AdditiveBlending, depthWrite: false });
 const FOUL_MAT = new THREE.MeshBasicMaterial({ color: "#ffffff", transparent: true, opacity: 0.8 });
 const BOX_GHOST_MAT = new THREE.MeshBasicMaterial({ color: "#fff", transparent: true, opacity: 0.05 });
-const BOX_CHALK_MAT = new THREE.MeshBasicMaterial({ color: "#ffffff", transparent: true, opacity: 0.3 });
+const BOX_CHALK_MAT = new THREE.MeshBasicMaterial({ color: "#ffffff", transparent: true, opacity: 0.8 });
 
 const Pitcher = React.memo(({ machineState, windupStartTime, handedness }: { machineState: string, windupStartTime: number, handedness: 'LEFT' | 'RIGHT' }) => {
     const groupRef = useRef<THREE.Group>(null);
