@@ -231,7 +231,14 @@ export default function BaseballGame({ skipTeamCreation = false, skipStartScreen
 
         if (result.status === 'hit' || result.type === 'OUT' || result.type === 'FOUL') {
             setMachineState('flight');
-            // Wait for handleSettled signal from the Ball component
+
+            // --- FOUL PACING ---
+            // Force reset after 700ms for fouls so we don't wait for the ball to fly miles away
+            if (result.type === 'FOUL') {
+                setTimeout(() => {
+                    handleSettled();
+                }, 700);
+            }
         } else {
             setMachineState('result');
             setTimeout(() => processResult(result), 1500);
@@ -318,10 +325,11 @@ export default function BaseballGame({ skipTeamCreation = false, skipStartScreen
     }, [gameState.balls, gameState.strikes, gameState.outs, gameState.inning, gameState.isTop, gameState.score, gameState.runners, maxInnings]);
 
     const handleSettled = useCallback(() => {
-        if (pitchResult) {
+        // Only process if we are still in flight mode to prevent double-processing (e.g. timeout + physics bounce)
+        if (pitchResult && machineState === 'flight') {
             processResult(pitchResult);
         }
-    }, [pitchResult, processResult]);
+    }, [pitchResult, processResult, machineState]);
 
     const advanceRunners = (r: [boolean, boolean, boolean], type: 'SINGLE' | 'DOUBLE' | 'TRIPLE' | 'HOMERUN') => {
         let runs = 0;
@@ -426,8 +434,8 @@ export default function BaseballGame({ skipTeamCreation = false, skipStartScreen
     useEffect(() => {
         if (machineState === 'idle' && gameStarted && !gameState.gameOver) {
             const timeSinceSideChange = performance.now() - sideChangeTimeRef.current;
-            // If side change happened recently (within last 3s), wait 3s, otherwise standard 1.5s
-            const delay = timeSinceSideChange < 3000 ? 3000 : 1500;
+            // If side change happened recently (within last 3s), wait 3s, otherwise standard 1s
+            const delay = timeSinceSideChange < 3000 ? 3000 : 1000;
             const timer = setTimeout(() => startPitch(), delay);
             return () => clearTimeout(timer);
         }
@@ -635,7 +643,7 @@ export default function BaseballGame({ skipTeamCreation = false, skipStartScreen
                     gl={{ antialias: false, powerPreference: 'high-performance' }}
                     camera={{ fov: 75 }}
                 >
-                    <Camera isUserPitching={!gameState.isTop} machineState={machineState} ballRef={gameBallRef} />
+                    <Camera isUserPitching={!gameState.isTop} machineState={machineState} ballRef={gameBallRef} pitchResult={pitchResult} />
 
                     <color attach="background" args={['#020408']} />
                     <fog attach="fog" args={['#020408', 30, 250]} />

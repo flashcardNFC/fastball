@@ -42,7 +42,7 @@ export function Ball({
 }: BallProps) {
 
     const meshRef = useRef<THREE.Mesh>(null);
-    const flightData = useRef<{ v0: THREE.Vector3; startTime: number } | null>(null);
+    const flightData = useRef<{ v0: THREE.Vector3; startTime: number; type?: string; gravity: number } | null>(null);
     const [localHasProcessed, setLocalHasProcessed] = useState(false);
     const [showTrail, setShowTrail] = useState(false);
     const hasFinishedRef = useRef(false);
@@ -147,6 +147,8 @@ export function Ball({
                 if (ev > 0) {
                     const powerBonus = absTiming <= tPerfect ? (1 + teamStats.power * 0.02) : 1.0;
                     ev = (ev * powerBonus) * (0.85 + 0.15 * pciPenalty);
+                    // Standardize to MLB record speeds (Hard cap at 120 mph)
+                    ev = Math.min(ev, 120);
                 }
 
                 // 3. Launch Angle
@@ -258,22 +260,35 @@ export function Ball({
         } else if (state === 'flight' && flightData.current) {
             const now = performance.now();
             const elapsed = (now - flightData.current.startTime) / 1000;
-            const gravity = MLB_CONSTANTS.GRAVITY;
+            const currentGravity = flightData.current.gravity;
 
-            // --- AIR DRAG (Fluid Dynamics Approximation) ---
+            // --- AIR DRAG & FLIGHT UPDATES ---
             const currentVel = flightData.current.v0.length();
             if (currentVel > 0.1) {
                 // Realistic drag for a baseball (Cd ~ 0.3)
                 // a_drag = k * v^2 where k ~ 0.005
                 const dragCoeff = 0.005;
                 const dragFactor = dragCoeff * currentVel * dt;
+
+                // --- FOUL DISAPPEARANCE ---
+                // Pop foul balls out of existence after 700ms for faster pacing
+                if (flightData.current.type === 'FOUL' && elapsed > 0.7) {
+                    flightData.current = null;
+                    setShowTrail(false);
+                    if (!hasCalledSettled.current) {
+                        hasCalledSettled.current = true;
+                        if (onSettled) onSettled();
+                    }
+                    return;
+                }
+
                 flightData.current.v0.x *= (1 - dragFactor);
                 flightData.current.v0.z *= (1 - dragFactor);
                 // Vertical drag is slightly less to preserve "moonshot" feel
                 flightData.current.v0.y *= (1 - dragFactor * 0.9);
             }
 
-            flightData.current.v0.y += gravity * dt;
+            flightData.current.v0.y += currentGravity * dt;
 
             // Apply position updates with the calculated velocity
             meshRef.current.position.addScaledVector(flightData.current.v0, dt);
@@ -281,22 +296,26 @@ export function Ball({
             const GROUND_Y = 0.037;
             if (meshRef.current.position.y < GROUND_Y) {
                 meshRef.current.position.y = GROUND_Y;
+
+                // Ground friction/bounce
                 flightData.current.v0.y *= -0.45;
                 flightData.current.v0.x *= 0.8;
                 flightData.current.v0.z *= 0.8;
-
-                if (Math.abs(flightData.current.v0.y) < 0.2) {
-                    flightData.current.v0.y = 0;
-                    if (!hasCalledSettled.current) {
-                        hasCalledSettled.current = true;
-                        if (onSettled) onSettled();
-                    }
-                }
             }
 
-            if ((meshRef.current.position.z < -127 || Math.abs(meshRef.current.position.x) > 85) && !hasCalledSettled.current) {
+            // --- UNIFIED RESOLUTION LOGIC ---
+            const type = flightData.current.type;
+
+            // 1. Balls in Play (Non-HR, Non-Foul): Resolve after exactly 3.0 seconds
+            if (['SINGLE', 'DOUBLE', 'TRIPLE', 'OUT'].includes(type || '') && elapsed >= 3.0 && !hasCalledSettled.current) {
                 hasCalledSettled.current = true;
-                setTimeout(() => { if (onSettled) onSettled(); }, 1200);
+                if (onSettled) onSettled();
+            }
+
+            // 2. Home Runs: Resolve 400ms after crossing boundary
+            if (type === 'HOMERUN' && (meshRef.current.position.z < -127 || Math.abs(meshRef.current.position.x) > 85) && !hasCalledSettled.current) {
+                hasCalledSettled.current = true;
+                setTimeout(() => { if (onSettled) onSettled(); }, 400);
             }
 
             if (elapsed > 8) {
@@ -338,27 +357,69 @@ export function Ball({
             sprayAngle = (timing / 150) * (Math.PI / 3.5) * sideMult;
         }
 
-        // Initial velocity with air drag consideration (scaled for visual 108m fence)
-        let dragScale = 0.92;
+        let v0 = new THREE.Vector3(
+            Math.sin(sprayAngle) * speedMs * Math.cos(angleRad),
+            speedMs * Math.sin(angleRad),
+            -Math.cos(sprayAngle) * speedMs * Math.cos(angleRad)
+        );
 
-        // --- OUT PROTECTION ---
-        // If it's a fly out, ensure it visually dies before the warning track (Fence at 122m)
+        let gravity = MLB_CONSTANTS.GRAVITY;
+
+        // --- DYNAMIC PACING ENGINE (Time-Dilation) ---
         if (res.type === 'OUT' && la > 15) {
-            const vms = speedMs;
-            const theoreticalDist = (vms * vms * Math.sin(2 * angleRad)) / Math.abs(MLB_CONSTANTS.GRAVITY);
-            if (theoreticalDist > 120) {
-                // Scale velocity down so it lands around 110m (short of the fence)
-                dragScale = Math.sqrt(110 / theoreticalDist);
+            const vy0 = v0.y;
+            const vz0 = v0.z;
+            const g = Math.abs(gravity);
+
+            // 1. Calculate natural flight distance and time
+            const naturalT = (2 * vy0) / g;
+            const naturalD = Math.abs(vz0 * naturalT); // Simple projectile D
+
+            // 2. Map theoretical distance to a realistic outfield landing (Max 110m)
+            // If exit velo is high, it goes deep. If low, it drops in shallow.
+            const targetD = Math.max(25, Math.min(108, naturalD * 0.75));
+
+            // 3. To hit targetD in exactly 3.0 seconds, we need:
+            // k is our dilation factor. We want T_final = 3.0.
+            // Since D stays the same regardless of k (v scales up, T scales down),
+            // We first adjust v0 to hit the target distance naturally, then dilate.
+            const v0DistAdjusted = v0.clone().multiplyScalar(Math.sqrt(targetD / naturalD));
+            const T_distAdjusted = (2 * v0DistAdjusted.y) / g;
+
+            const k = Math.max(1, T_distAdjusted / 3.0); // Ratio to compress time to 3s
+            v0 = v0DistAdjusted.multiplyScalar(k);
+            gravity *= (k * k);
+        }
+
+        if (res.type === 'HOMERUN') {
+            const naturalT = (2 * v0.y) / Math.abs(gravity);
+            if (naturalT > 4.0) {
+                const k = naturalT / 4.0;
+                v0.multiplyScalar(k);
+                gravity *= (k * k);
+            }
+            // Ensure horizontal punch clears the fence
+            const vz0 = Math.abs(v0.z);
+            if (vz0 * 4.0 < 135) {
+                v0.x *= (135 / (vz0 * 4.0));
+                v0.z *= (135 / (vz0 * 4.0));
+            }
+        }
+
+        if (res.type === 'FOUL') {
+            const naturalT = (2 * v0.y) / Math.abs(gravity);
+            if (naturalT > 1.5) {
+                const k = naturalT / 1.5;
+                v0.multiplyScalar(k);
+                gravity *= (k * k);
             }
         }
 
         flightData.current = {
             startTime: performance.now(),
-            v0: new THREE.Vector3(
-                Math.sin(sprayAngle) * speedMs * Math.cos(angleRad) * dragScale,
-                speedMs * Math.sin(angleRad) * dragScale,
-                -Math.cos(sprayAngle) * speedMs * Math.cos(angleRad) * dragScale
-            )
+            type: res.type,
+            v0: v0,
+            gravity: gravity
         };
     };
 
