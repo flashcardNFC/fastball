@@ -3,18 +3,20 @@ import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 
 interface PCIProps {
-    position: { x: number; y: number };
+    pciPositionRef: React.MutableRefObject<{ x: number; y: number }>;
 }
 
-export function PCI({ position }: PCIProps) {
+export function PCI({ pciPositionRef }: PCIProps) {
     const meshRef = useRef<THREE.Group>(null);
 
     useFrame(() => {
         if (!meshRef.current) return;
-        // Smoothly follow the position
-        meshRef.current.position.x = THREE.MathUtils.lerp(meshRef.current.position.x, position.x, 0.2);
-        meshRef.current.position.y = THREE.MathUtils.lerp(meshRef.current.position.y, position.y, 0.2);
+        // Smoothly follow the position from the ref
+        const pos = pciPositionRef.current;
+        meshRef.current.position.x = THREE.MathUtils.lerp(meshRef.current.position.x, pos.x, 0.4);
+        meshRef.current.position.y = THREE.MathUtils.lerp(meshRef.current.position.y, pos.y, 0.4);
     });
+
 
     return (
         <group ref={meshRef} position={[0, 1.1, 0.5]}>

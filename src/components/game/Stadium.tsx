@@ -1,7 +1,22 @@
 import React, { useRef } from 'react';
 import { useFrame, useLoader } from '@react-three/fiber';
 import * as THREE from 'three';
+import heroLogo from '../../assets/logo-scratch-hero.png';
 import { MLB_CONSTANTS } from '../../lib/constants';
+
+// Shared geometries and materials for performance
+const BULB_GEOM = new THREE.PlaneGeometry(0.75, 0.75);
+const BULB_MAT = new THREE.MeshStandardMaterial({
+    color: "#fff",
+    emissive: "#ffffff",
+    emissiveIntensity: 20,
+    toneMapped: false
+});
+
+const STRIPE_GEOM = new THREE.PlaneGeometry(150, 5);
+const DARK_MAT = new THREE.MeshStandardMaterial({ color: "#1e441e", roughness: 1 });
+const LIGHT_MAT = new THREE.MeshStandardMaterial({ color: "#1a3c1a", roughness: 1 });
+
 
 function Pitcher({ machineState, windupStartTime }: { machineState: string, windupStartTime: number }) {
     const groupRef = useRef<THREE.Group>(null);
@@ -79,6 +94,17 @@ function Pitcher({ machineState, windupStartTime }: { machineState: string, wind
 }
 
 function LightTower({ position }: { position: [number, number, number] }) {
+    const groupRef = useRef<THREE.Group>(null);
+
+    // Precise rotation to face Home Plate (0,0,0)
+    // Using useLayoutEffect to ensure it happens before first render
+    React.useLayoutEffect(() => {
+        if (groupRef.current) {
+            groupRef.current.lookAt(0, 1.5, 0);
+
+        }
+    }, [position]);
+
     return (
         <group position={position}>
             {/* Tower Structure */}
@@ -88,46 +114,69 @@ function LightTower({ position }: { position: [number, number, number] }) {
             </mesh>
 
             {/* Light Panel */}
-            <group position={[0, 28, position[2] > 0 ? -1.2 : 1.2]} rotation={[Math.PI / 8, position[0] > 0 ? Math.PI / 4 : -Math.PI / 4, 0]}>
-                <mesh>
-                    <boxGeometry args={[4, 3, 0.5]} />
-                    <meshStandardMaterial color="#222" />
-                </mesh>
+            <group position={[0, 28, 0]}>
+                <group ref={groupRef}>
+                    <group position={[0, 0, 1.2]}>
+                        <mesh>
+                            <boxGeometry args={[4, 3, 0.5]} />
+                            <meshStandardMaterial color="#111" metalness={0.8} roughness={0.2} />
+                        </mesh>
 
-                {/* Light Bulbs Cluster */}
-                {[...Array(12)].map((_, i) => (
-                    <mesh key={i} position={[(i % 4 - 1.5) * 0.9, (Math.floor(i / 4) - 1) * 0.9, 0.3]}>
-                        <planeGeometry args={[0.7, 0.7]} />
-                        <meshBasicMaterial color="#fff" />
-                    </mesh>
-                ))}
+                        {/* Light Bulbs - Using Instanced Mesh would be better, but for 12 it's okay. 
+                            However, let's at least use the shared geometry/material. */}
+                        {[...Array(12)].map((_, i) => (
+                            <mesh
+                                key={i}
+                                geometry={BULB_GEOM}
+                                material={BULB_MAT}
+                                position={[(i % 4 - 1.5) * 0.9, (Math.floor(i / 4) - 1) * 0.9, 0.26]}
+                            />
+                        ))}
 
-                {/* Actual Light Source */}
-                <spotLight
-                    position={[0, 0, 0.5]}
-                    angle={0.8}
-                    penumbra={0.5}
-                    intensity={150}
-                    distance={150}
-                    color="#fff"
-                    castShadow
-                />
+
+                        {/* Flare overlay */}
+                        <mesh position={[0, 0, 0.4]} scale={[6, 5, 1]}>
+                            <planeGeometry args={[1, 1]} />
+                            <meshBasicMaterial
+                                color="#ffffff"
+                                transparent
+                                opacity={0.2}
+                                blending={THREE.AdditiveBlending}
+                                depthWrite={false}
+                            />
+                        </mesh>
+
+                        <spotLight
+                            position={[0, 0, 1]}
+                            angle={Math.PI / 3}
+                            penumbra={0.3}
+                            intensity={300}
+                            distance={150}
+                            color="#fff8e1"
+                            castShadow={false}
+                        />
+                    </group>
+                </group>
             </group>
         </group>
     );
 }
 
+
+
 function BearHandsLogo() {
-    const texture = useLoader(THREE.TextureLoader, '/bearhands-logo.png');
+    const texture = useLoader(THREE.TextureLoader, heroLogo);
 
     return (
-        <group rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.012, 3.5]}>
+        <group rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.012, 1.0]}>
             <mesh>
-                <planeGeometry args={[3.5, 3.5]} />
-                <meshBasicMaterial map={texture} transparent opacity={0.8} />
+                <planeGeometry args={[1.75, 1.75]} />
+                <meshBasicMaterial map={texture} transparent opacity={0.6} />
+
             </mesh>
         </group>
     );
+
 }
 
 export function Stadium({ machineState, windupStartTime }: { machineState: string, windupStartTime: number }) {
@@ -138,12 +187,17 @@ export function Stadium({ machineState, windupStartTime }: { machineState: strin
                 <meshStandardMaterial color="#1a3c1a" roughness={1} />
             </mesh>
 
+            {/* Grass Stripes - Manual Instancing for clarity but optimized with shared geoms/mats */}
             {[...Array(20)].map((_, i) => (
-                <mesh key={i} rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.095, -i * 10 - 10]}>
-                    <planeGeometry args={[150, 5]} />
-                    <meshStandardMaterial color={i % 2 === 0 ? "#1e441e" : "#1a3c1a"} roughness={1} />
-                </mesh>
+                <mesh
+                    key={i}
+                    geometry={STRIPE_GEOM}
+                    material={i % 2 === 0 ? DARK_MAT : LIGHT_MAT}
+                    rotation={[-Math.PI / 2, 0, 0]}
+                    position={[0, -0.095, -i * 10 - 10]}
+                />
             ))}
+
 
             <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.09, -5]} receiveShadow>
                 <circleGeometry args={[28, 64]} />

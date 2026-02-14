@@ -16,8 +16,10 @@ interface BallProps {
     difficulty: Difficulty;
     teamStats: TeamStats;
     strikes: number;
-    pciPosition: { x: number; y: number };
+    pciPositionRef: React.MutableRefObject<{ x: number; y: number }>;
+    onContact?: (pos: [number, number, number], isHit: boolean) => void;
 }
+
 
 export function Ball({
     state,
@@ -29,36 +31,50 @@ export function Ball({
     difficulty,
     teamStats,
     strikes,
-    pciPosition
+    pciPositionRef,
+    onContact
 }: BallProps) {
+
     const meshRef = useRef<THREE.Mesh>(null);
     const flightData = useRef<{ v0: THREE.Vector3; startTime: number } | null>(null);
     const [localHasProcessed, setLocalHasProcessed] = useState(false);
     const [showTrail, setShowTrail] = useState(false);
     const hasFinishedRef = useRef(false);
 
+    // Performance: Pre-calculate color object so we don't 'new' it every frame/render
+    const ballColor = React.useMemo(() => new THREE.Color(pitch.color), [pitch.color]);
+
+
+
     useEffect(() => {
-        if (state === 'pitching') {
+        // Reset sequence logic: Only clear everything when starting a NEW pitch (windup/idle)
+        // Transitioning to 'flight' or 'result' should NOT kill the trail or reset flags
+        if (state === 'idle' || state === 'windup') {
+            setShowTrail(false);
             setLocalHasProcessed(false);
             hasFinishedRef.current = false;
             flightData.current = null;
-            setShowTrail(false);
-        } else if (state === 'idle' || state === 'windup') {
-            setShowTrail(false);
         }
-    }, [state]);
+    }, [state, pitch]); // Include pitch to reset trail on new selections
+
+
+
 
     useFrame(() => {
         if (!meshRef.current) return;
 
         if (state === 'pitching' && !localHasProcessed) {
             const elapsed = (performance.now() - pitchStartTime) / 1000;
+
+            // Initial positioning before pitch release
             if (elapsed < 0) {
                 meshRef.current.position.copy(BALL_START_POS);
+                if (showTrail) setShowTrail(false);
                 return;
             }
 
-            if (!showTrail) setShowTrail(true);
+            // Delay trail slightly until ball is clear of pitcher's starting pos to avoid "jump" lines
+            if (elapsed > 0.05 && !showTrail) setShowTrail(true);
 
             const velocity = pitch.speed * MLB_CONSTANTS.MPH_TO_MS;
             const totalTime = Math.abs(BALL_START_POS.z) / velocity;
@@ -72,14 +88,21 @@ export function Ball({
             const vy0 = (targetLocation.y + (pitch.movement.y * 1) - BALL_START_POS.y - 0.5 * MLB_CONSTANTS.GRAVITY * T * T) / T;
             const currentY = BALL_START_POS.y + (vy0 * elapsed) + (0.5 * MLB_CONSTANTS.GRAVITY * elapsed * elapsed);
 
+
             meshRef.current.position.set(currentX, currentY, currentZ);
 
-            const CONTACT_WINDOW_Z = 0.8;
+            const CONTACT_WINDOW_Z = 0.5; // Tighter window for faster swing
             if (swingRef.current !== null && Math.abs(currentZ) < CONTACT_WINDOW_Z && !localHasProcessed) {
+                // The bat takes ~105ms to reach the plate in the optimized animation.
+                const SWING_DELAY = 105;
                 const absolutePlateTime = pitchStartTime + totalTime * 1000;
-                const timingDiff = swingRef.current - absolutePlateTime;
+                const timingDiff = (swingRef.current + SWING_DELAY) - absolutePlateTime;
 
                 setLocalHasProcessed(true);
+
+                // Visual collision 'snap' to the Impact Plane (Z ~ 0.25)
+                // This ensures the ball is VISIBLY touching the barrel at the moment of impact.
+                meshRef.current.position.z = 0.25;
 
                 const absTiming = Math.abs(timingDiff);
                 const roll = Math.random();
@@ -92,12 +115,16 @@ export function Ball({
                 const perfectWindow = 12 * factor;
                 const timingLabel = absTiming < perfectWindow ? 'PERFECT' : Math.abs(Math.round(timingDiff)) + 'MS ' + (timingDiff > 0 ? 'LATE' : 'EARLY');
 
+
+
                 // 1. Calculate PCI Accuracy (Plate Coverage)
+                const currentPci = pciPositionRef.current;
                 const pciDist = Math.sqrt(
-                    Math.pow(pciPosition.x - targetLocation.x, 2) +
-                    Math.pow(pciPosition.y - targetLocation.y, 2)
+                    Math.pow(currentPci.x - targetLocation.x, 2) +
+                    Math.pow(currentPci.y - targetLocation.y, 2)
                 );
                 const pciPenalty = Math.max(0, 1 - (pciDist / 0.4)); // Coverage circle of ~0.4 units
+
 
                 // 2. Normal Distribution Exit Velocity (EV)
                 // Formula centers on a max EV, penalizes for timing and PCI gap
@@ -119,8 +146,9 @@ export function Ball({
 
                 // 3. Launch Angle (LA)
                 // LA is slightly random but influenced by PCI vertical position (Under ball = Fly, Over ball = Ground)
-                const verticalOffset = (pciPosition.y - targetLocation.y);
+                const verticalOffset = (currentPci.y - targetLocation.y);
                 const baseLA = 15 + (verticalOffset * 60); // PCI under ball increases LA
+
                 const la = Math.max(-15, Math.min(50, baseLA + (Math.random() * 10 - 5)));
 
                 // 4. Outcomes determined by LA and EV
@@ -157,14 +185,27 @@ export function Ball({
                     res = { status: 'miss', type: 'STRIKE', timingOffset: timingDiff, timingLabel, pitchLocation: targetLocation, pitchType: pitch.type };
                 }
 
-                if (res.status === 'hit' || res.type === 'OUT') initFlight(res);
+                if (res.status === 'hit' || res.type === 'OUT' || res.type === 'FOUL') {
+                    if (onContact) onContact([meshRef.current.position.x, meshRef.current.position.y, meshRef.current.position.z], res.status === 'hit');
+
+                    setShowTrail(false); // Reset trail for flight
+                    initFlight(res);
+
+                    // Restart trail for the ball escape path after a tiny delay
+                    setTimeout(() => {
+                        if (hasFinishedRef.current) setShowTrail(true);
+                    }, 16);
+                }
                 complete(res);
             }
 
+
             if (currentZ > 1.3) {
                 const isStrike = Math.abs(targetLocation.x) <= 0.35 && targetLocation.y >= 0.6 && targetLocation.y <= 1.6;
+                setShowTrail(false); // Kill trail immediately on ball/strike
                 complete({ status: isStrike ? 'strike' : 'ball', type: isStrike ? 'STRIKE' : 'BALL', pitchLocation: targetLocation });
             }
+
         } else if (state === 'flight' && flightData.current) {
             const elapsed = (performance.now() - flightData.current.startTime) / 1000;
             meshRef.current.position.x += flightData.current.v0.x * 0.016;
@@ -207,17 +248,30 @@ export function Ball({
     const ballMesh = (
         <mesh ref={meshRef}>
             <sphereGeometry args={[MLB_CONSTANTS.BALL_RADIUS * 1.5, 32, 32]} />
-            <meshStandardMaterial color="#fff" emissive={pitch.color} emissiveIntensity={2} />
+            <meshStandardMaterial color="#fff" emissive={ballColor} emissiveIntensity={2} />
         </mesh>
     );
+
 
     return (
         <group>
             {showTrail ? (
-                <Trail width={1.8} length={10} color={new THREE.Color(pitch.color)} attenuation={(t) => t * t}>
+                <Trail
+                    width={0.15} // Extra sharp
+                    length={20}
+                    color={ballColor}
+                    attenuation={(t) => t * t * t * t}
+                    opacity={0.8}
+                    transparent
+                >
                     {ballMesh}
                 </Trail>
             ) : ballMesh}
+
+
+
+
+
         </group>
     );
 }

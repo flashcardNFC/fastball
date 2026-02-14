@@ -5,10 +5,12 @@ import * as THREE from 'three';
 interface BatProps {
     swingTime: number | null;
     handedness: 'LEFT' | 'RIGHT';
-    pciPosition: { x: number; y: number };
+    pciPositionRef: React.MutableRefObject<{ x: number; y: number }>;
 }
 
-export function Bat({ swingTime, handedness, pciPosition }: BatProps) {
+
+export function Bat({ swingTime, handedness, pciPositionRef }: BatProps) {
+
     const pivotRef = useRef<THREE.Group>(null);
     const animationStart = useRef<number | null>(null);
     const isLefty = handedness === 'LEFT';
@@ -22,61 +24,58 @@ export function Bat({ swingTime, handedness, pciPosition }: BatProps) {
         if (!pivotRef.current) return;
 
         // Base hand position adjusted for PCI "reach"
-        // Move hands EVEN CLOSER to the plate (was 0.85)
+        const pos = pciPositionRef.current;
         const baseX = 0.65 * sideMult;
-        const reachedX = baseX + (pciPosition.x * 0.45);
-        const reachedY = 1.05 + (pciPosition.y - 1.1) * 0.5;
+        const reachedX = baseX + (pos.x * 0.45);
+        const reachedY = 1.05 + (pos.y - 1.1) * 0.5;
         const reachedZ = 0.9;
+
 
         if (animationStart.current) {
             const elapsed = (performance.now() - animationStart.current) / 1000;
-            const duration = 0.5; // Full duration for wrap
+            const duration = 0.3; // ELITE MLB swing speed
 
             if (elapsed < duration) {
                 const progress = elapsed / duration;
-                const contactThreshold = 0.25;
+                // Visual contact happens at ~35% of the swing
+                const contactThreshold = 0.35;
 
-                // Rotation Y: The actual swing (around the batter)
+                // Rotation Y: The actual swing
                 const startY = isLefty ? -Math.PI / 2.2 : Math.PI / 2.2;
-                const contactY = isLefty ? Math.PI / 4 : -Math.PI / 4;
-                const finishY = isLefty ? Math.PI * 1.3 : -Math.PI * 1.3;
 
-                if (progress < contactThreshold) {
-                    const p = progress / contactThreshold;
-                    pivotRef.current.rotation.y = startY + p * (contactY - startY);
-                } else {
-                    const p = (progress - contactThreshold) / (1 - contactThreshold);
-                    const ease = 1 - Math.pow(1 - p, 3);
-                    pivotRef.current.rotation.y = contactY + ease * (finishY - contactY);
-                }
-
-                // Rotation X: Vertical Tilt (Up -> Level -> Follow through)
-                const startX = Math.PI / 2.3; // VERY UPRIGHT (~80 DEGREE ANGLE UP)
+                // Rotation X: Vertical Tilt
+                const startX = Math.PI / 2.3;
                 const contactX = 0;
                 const finishX = -Math.PI / 6;
 
                 if (progress < contactThreshold) {
                     const p = progress / contactThreshold;
+                    const easeP = p * p; // Acceleration phase
+                    pivotRef.current.rotation.y = startY + easeP * (isLefty ? Math.PI / 2 : -Math.PI / 2);
                     pivotRef.current.rotation.x = startX + p * (contactX - startX);
                 } else {
                     const p = (progress - contactThreshold) / (1 - contactThreshold);
-                    const ease = 1 - Math.pow(1 - p, 2);
+                    const ease = 1 - Math.pow(1 - p, 5); // Explosive follow through
+                    const swingPath = isLefty ? Math.PI / 2 : -Math.PI / 2;
+                    pivotRef.current.rotation.y = (startY + swingPath) + ease * (isLefty ? Math.PI : -Math.PI);
                     pivotRef.current.rotation.x = contactX + ease * (finishX - contactX);
                 }
 
-                // Rotation Z: Aggressive lean toward user/camera for 3D depth
-                const startZ = (Math.PI / 3) * sideMult; // Tilted heavily toward user
+
+                // Rotation Z: Depth lean
+                const startZ = (Math.PI / 3) * sideMult;
                 pivotRef.current.rotation.z = startZ * (1 - progress);
 
-                // Hand Reach Dynamics
-                const pushProgress = Math.sin(progress * Math.PI);
-                pivotRef.current.position.x = reachedX - (pushProgress * 0.1 * sideMult);
+                // Hand Reach Dynamics - Keep the bat "forward" through the zone
+                const pushProgress = Math.sin(Math.min(1, progress / 0.6) * Math.PI);
+                pivotRef.current.position.x = reachedX;
                 pivotRef.current.position.y = reachedY;
-                pivotRef.current.position.z = reachedZ - (pushProgress * 0.15);
+                pivotRef.current.position.z = reachedZ - (pushProgress * 0.2);
             } else {
                 animationStart.current = null;
             }
         } else {
+
             // Idle "Set" Stance
             // Crowding plate, barrel ALMOST VERTICAL and TILTED HEAVILY TOWARD CAMERA
             pivotRef.current.rotation.y = isLefty ? -Math.PI / 2.2 : Math.PI / 2.2;
@@ -105,15 +104,20 @@ export function Bat({ swingTime, handedness, pciPosition }: BatProps) {
                     <cylinderGeometry args={[0.02, 0.015, 0.4, 16]} />
                     <meshStandardMaterial color="#222" roughness={0.9} />
                 </mesh>
-                {/* Knob */}
-                <mesh position={[0, -0.05, 0]}>
-                    <cylinderGeometry args={[0.028, 0.02, 0.04, 16]} />
-                    <meshStandardMaterial color="#c4a484" />
+                {/* Knob - Reshaped for MLB look (Disk with flared transition) */}
+                <mesh position={[0, -0.04, 0]}>
+                    <cylinderGeometry args={[0.02, 0.015, 0.04, 16]} />
+                    <meshStandardMaterial color="#1a1a1a" roughness={0.8} />
                 </mesh>
-                <mesh position={[0, -0.07, 0]}>
-                    <sphereGeometry args={[0.028, 16, 16, 0, Math.PI * 2, Math.PI / 2, Math.PI / 2]} />
-                    <meshStandardMaterial color="#c4a484" />
+                <mesh position={[0, -0.065, 0]}>
+                    <cylinderGeometry args={[0.038, 0.038, 0.015, 32]} />
+                    <meshStandardMaterial color="#c4a484" roughness={0.3} />
                 </mesh>
+                <mesh position={[0, -0.075, 0]}>
+                    <sphereGeometry args={[0.038, 32, 16, 0, Math.PI * 2, Math.PI / 2, Math.PI / 2]} />
+                    <meshStandardMaterial color="#c4a484" roughness={0.3} />
+                </mesh>
+
             </group>
         </group>
     );
