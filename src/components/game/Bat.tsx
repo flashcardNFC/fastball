@@ -33,44 +33,58 @@ export function Bat({ swingTime, handedness, pciPositionRef }: BatProps) {
 
         if (animationStart.current) {
             const elapsed = (performance.now() - animationStart.current) / 1000;
-            const duration = 0.3; // ELITE MLB swing speed
+            const swingDuration = 0.3; // ELITE MLB swing speed
+            const returnDuration = 0.6; // Smooth return to stance
+            const totalDuration = swingDuration + returnDuration;
 
-            if (elapsed < duration) {
-                const progress = elapsed / duration;
-                // Visual contact happens at ~35% of the swing
-                const contactThreshold = 0.35;
-
-                // Rotation Y: The actual swing
+            if (elapsed < totalDuration) {
+                // Rotation constants for reuse
                 const startY = isLefty ? -Math.PI / 2.2 : Math.PI / 2.2;
-
-                // Rotation X: Vertical Tilt
                 const startX = Math.PI / 2.3;
+                const startZ = (Math.PI / 3) * sideMult;
                 const contactX = 0;
                 const finishX = -Math.PI / 6;
+                const swingPath = isLefty ? Math.PI / 2 : -Math.PI / 2;
+                const finishY = (startY + swingPath) + (isLefty ? Math.PI : -Math.PI);
 
-                if (progress < contactThreshold) {
-                    const p = progress / contactThreshold;
-                    const easeP = p * p; // Acceleration phase
-                    pivotRef.current.rotation.y = startY + easeP * (isLefty ? Math.PI / 2 : -Math.PI / 2);
-                    pivotRef.current.rotation.x = startX + p * (contactX - startX);
+                if (elapsed < swingDuration) {
+                    const progress = elapsed / swingDuration;
+                    // Visual contact happens at ~35% of the swing
+                    const contactThreshold = 0.35;
+
+                    if (progress < contactThreshold) {
+                        const p = progress / contactThreshold;
+                        const easeP = p * p; // Acceleration phase
+                        pivotRef.current.rotation.y = startY + easeP * (isLefty ? Math.PI / 2 : -Math.PI / 2);
+                        pivotRef.current.rotation.x = startX + p * (contactX - startX);
+                    } else {
+                        const p = (progress - contactThreshold) / (1 - contactThreshold);
+                        const ease = 1 - Math.pow(1 - p, 5); // Explosive follow through
+                        const swingPath = isLefty ? Math.PI / 2 : -Math.PI / 2;
+                        pivotRef.current.rotation.y = (startY + swingPath) + ease * (isLefty ? Math.PI : -Math.PI);
+                        pivotRef.current.rotation.x = contactX + ease * (finishX - contactX);
+                    }
+
+                    // Rotation Z: Depth lean
+                    pivotRef.current.rotation.z = startZ * (1 - progress);
+
+                    // Hand Reach Dynamics - Keep the bat "forward" through the zone
+                    const pushProgress = Math.sin(Math.min(1, progress / 0.6) * Math.PI);
+                    pivotRef.current.position.z = reachedZ - (pushProgress * 0.2);
                 } else {
-                    const p = (progress - contactThreshold) / (1 - contactThreshold);
-                    const ease = 1 - Math.pow(1 - p, 5); // Explosive follow through
-                    const swingPath = isLefty ? Math.PI / 2 : -Math.PI / 2;
-                    pivotRef.current.rotation.y = (startY + swingPath) + ease * (isLefty ? Math.PI : -Math.PI);
-                    pivotRef.current.rotation.x = contactX + ease * (finishX - contactX);
+                    // Smooth Return Phase
+                    const returnProgress = (elapsed - swingDuration) / returnDuration;
+                    const ease = returnProgress * returnProgress * (3 - 2 * returnProgress); // Smoothstep
+
+                    pivotRef.current.rotation.y = finishY + ease * (startY - finishY);
+                    pivotRef.current.rotation.x = finishX + ease * (startX - finishX);
+                    pivotRef.current.rotation.z = 0 + ease * startZ;
+                    pivotRef.current.position.z = reachedZ;
                 }
 
-
-                // Rotation Z: Depth lean
-                const startZ = (Math.PI / 3) * sideMult;
-                pivotRef.current.rotation.z = startZ * (1 - progress);
-
-                // Hand Reach Dynamics - Keep the bat "forward" through the zone
-                const pushProgress = Math.sin(Math.min(1, progress / 0.6) * Math.PI);
+                // Maintain x and y position through both phases
                 pivotRef.current.position.x = reachedX;
                 pivotRef.current.position.y = reachedY;
-                pivotRef.current.position.z = reachedZ - (pushProgress * 0.2);
             } else {
                 animationStart.current = null;
             }
