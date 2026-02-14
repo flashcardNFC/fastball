@@ -61,38 +61,39 @@ export function Bat({ swingTime, handedness, pciPositionRef }: BatProps) {
 
         if (animationStart.current) {
             const elapsed = (performance.now() - animationStart.current) / 1000;
-            const duration = 0.45;
-            const contactThreshold = 0.25;
+            const duration = 0.55; // Slightly longer for fuller follow-through
+            const contactThreshold = 0.2; // Quicker to contact
 
             if (elapsed < duration) {
                 const progress = elapsed / duration;
                 const startX = -1.2;
-                const contactX = -0.1;
-                const finishX = -1.0;
+                const contactX = -0.05;
+                const finishX = -1.5; // More pronounced follow-through dip
 
                 const startY = isLefty ? -2.4 : 2.4;
                 const contactY = isLefty ? -Math.PI : Math.PI;
-                const finishY = isLefty ? -7.2 : 7.2;
+                const finishY = isLefty ? -9.5 : 9.5; // Much fuller wrap-around follow-through
 
                 if (progress < contactThreshold) {
                     const p = progress / contactThreshold;
-                    const easeP = Math.pow(p, 1.4);
+                    const easeP = Math.pow(p, 1.2); // Faster initial movement
                     pivotRef.current.rotation.y = startY + easeP * (contactY - startY);
                     pivotRef.current.rotation.x = startX + easeP * (contactX - startX);
                 } else {
                     const p = (progress - contactThreshold) / (1 - contactThreshold);
-                    const ease = 1 - Math.pow(1 - p, 2.5);
+                    const ease = 1 - Math.pow(1 - p, 3.5); // Snappier follow-through
                     pivotRef.current.rotation.y = contactY + ease * (finishY - contactY);
                     pivotRef.current.rotation.x = contactX + ease * (finishX - contactX);
                 }
 
+                // Rotational roll
                 const startZ = (Math.PI / 4) * sideMult;
-                pivotRef.current.rotation.z = startZ * (1 - Math.min(1, progress * 1.5));
+                pivotRef.current.rotation.z = startZ * (1 - Math.pow(progress, 0.5));
 
-                const pushProgress = Math.sin(Math.min(1, progress / 0.5) * Math.PI);
+                const pushProgress = Math.sin(Math.min(1, progress / 0.6) * Math.PI);
                 pivotRef.current.position.x = reachedX;
                 pivotRef.current.position.y = reachedY;
-                pivotRef.current.position.z = reachedZ - (pushProgress * 0.4);
+                pivotRef.current.position.z = reachedZ - (pushProgress * 0.5);
             } else {
                 animationStart.current = null;
             }

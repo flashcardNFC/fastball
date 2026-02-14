@@ -241,17 +241,20 @@ export const Stadium = React.memo(({ machineState, windupStartTime, pitcherHande
                 <FenceWordmark />
             </Suspense>
 
-            <LightTower position={[60, 0, -80]} />
-            <LightTower position={[-60, 0, -80]} />
-            <LightTower position={[45, 0, 20]} />
-            <LightTower position={[-45, 0, 20]} />
+            {/* Outfield Light Towers (Behind the fence) */}
+            <LightTower position={[80, 0, -135]} />
+            <LightTower position={[-80, 0, -135]} />
+            <LightTower position={[40, 0, -140]} />
+            <LightTower position={[-40, 0, -140]} />
 
             <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.085, -28]} geometry={INFIELD_GEOM} material={LIGHT_MAT} receiveShadow />
 
             {/* RESTORED HIGH-VISIBILITY FOUL LINES */}
             <group position={[0, 0.012, 0]}>
-                <mesh rotation={[-Math.PI / 2, 0, -Math.PI / 4]} position={[63.64, 0, -63.64]} geometry={FOUL_LINE_GEOM} material={FOUL_MAT} />
-                <mesh rotation={[-Math.PI / 2, 0, Math.PI / 4]} position={[-63.64, 0, -63.64]} geometry={FOUL_LINE_GEOM} material={FOUL_MAT} />
+                {/* Right Foul Line: Center adjusted to start at corner (1.1, -0.6) */}
+                <mesh rotation={[-Math.PI / 2, 0, -Math.PI / 4]} position={[64.74, 0, -64.24]} geometry={FOUL_LINE_GEOM} material={FOUL_MAT} />
+                {/* Left Foul Line: Center adjusted to start at corner (-1.1, -0.6) */}
+                <mesh rotation={[-Math.PI / 2, 0, Math.PI / 4]} position={[-64.74, 0, -64.24]} geometry={FOUL_LINE_GEOM} material={FOUL_MAT} />
             </group>
 
             {/* Render batter box chalk markings */}
