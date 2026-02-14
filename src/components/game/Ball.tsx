@@ -152,35 +152,46 @@ export function Ball({
                 const la = Math.max(-15, Math.min(50, baseLA + (Math.random() * 10 - 5)));
 
                 // 4. Outcomes determined by LA and EV
-                const sprayAngleRad = (timingDiff / 160) * (Math.PI / 3.2);
+                const sideMult = (teamStats.handedness === 'RIGHT') ? 1 : -1;
+                // PI/3.5 is ~51 degrees. Foul lines in Stadium.tsx are PI/4 (45 degrees).
+                const sprayAngle = (timingDiff / 150) * (Math.PI / 3.5) * sideMult;
+                const isFoulByAngle = Math.abs(sprayAngle) > Math.PI / 4;
 
-                if (contactQuality > 0.85) {
-                    // BARREL Zone
-                    if (la >= 24 && la <= 34) {
-                        const dist = (ev * 3.8) + (la - 25) * 2;
-                        res = { status: 'hit', type: 'HOMERUN', timingOffset: timingDiff, timingLabel, exitVelocity: ev, launchAngle: la, distance: dist, pitchLocation: targetLocation, pitchType: pitch.type };
+                if (contactQuality > 0.15) {
+                    if (isFoulByAngle) {
+                        res = { status: 'foul', type: 'FOUL', timingOffset: timingDiff, timingLabel, exitVelocity: ev * 0.6, launchAngle: la + 10, pitchLocation: targetLocation, pitchType: pitch.type };
+                    } else if (contactQuality > 0.85) {
+                        // BARREL Zone
+                        if (la >= 24 && la <= 34) {
+                            const dist = (ev * 3.8) + (la - 25) * 2;
+                            res = { status: 'hit', type: 'HOMERUN', timingOffset: timingDiff, timingLabel, exitVelocity: ev, launchAngle: la, distance: dist, pitchLocation: targetLocation, pitchType: pitch.type };
+                        } else {
+                            res = { status: 'hit', type: 'DOUBLE', timingOffset: timingDiff, timingLabel, exitVelocity: ev, launchAngle: la, pitchLocation: targetLocation, pitchType: pitch.type };
+                        }
+                    } else if (contactQuality > 0.6) {
+                        // SOLID CONTACT Zone
+                        const isGap = Math.abs(Math.abs(sprayAngle) - 0.45) < 0.15;
+                        if (la >= 10 && la <= 25) {
+                            res = { status: 'hit', type: isGap ? 'DOUBLE' : 'SINGLE', timingOffset: timingDiff, timingLabel, exitVelocity: ev, launchAngle: la, pitchLocation: targetLocation, pitchType: pitch.type };
+                        } else if (la > 25) {
+                            res = { status: 'miss', type: 'OUT', timingOffset: timingDiff, timingLabel, exitVelocity: ev, launchAngle: la, pitchLocation: targetLocation, pitchType: pitch.type };
+                        } else {
+                            res = { status: 'hit', type: 'SINGLE', timingOffset: timingDiff, timingLabel, exitVelocity: ev, launchAngle: la, pitchLocation: targetLocation, pitchType: pitch.type };
+                        }
+                    } else if (contactQuality > 0.3) {
+                        // WEAK CONTACT Zone
+                        if (roll < 0.3 + contactMod) {
+                            res = { status: 'hit', type: 'SINGLE', timingOffset: timingDiff, timingLabel, exitVelocity: ev, launchAngle: la, pitchLocation: targetLocation, pitchType: pitch.type };
+                        } else {
+                            res = { status: 'miss', type: 'OUT', timingOffset: timingDiff, timingLabel, exitVelocity: ev, launchAngle: la, pitchLocation: targetLocation, pitchType: pitch.type };
+                        }
                     } else {
-                        res = { status: 'hit', type: 'DOUBLE', timingOffset: timingDiff, timingLabel, exitVelocity: ev, launchAngle: la, pitchLocation: targetLocation, pitchType: pitch.type };
+                        // VERY WEAK Contact but Fair - typically a groundout or soft pop
+                        res = { status: 'miss', type: 'OUT', timingOffset: timingDiff, timingLabel, exitVelocity: ev * 0.7, launchAngle: la, pitchLocation: targetLocation, pitchType: pitch.type };
                     }
-                } else if (contactQuality > 0.6) {
-                    // SOLID CONTACT Zone
-                    const isGap = Math.abs(Math.abs(sprayAngleRad) - 0.4) < 0.2;
-                    if (la >= 10 && la <= 25) {
-                        res = { status: 'hit', type: isGap ? 'DOUBLE' : 'SINGLE', timingOffset: timingDiff, timingLabel, exitVelocity: ev, launchAngle: la, pitchLocation: targetLocation, pitchType: pitch.type };
-                    } else if (la > 25) {
-                        res = { status: 'miss', type: 'OUT', timingOffset: timingDiff, timingLabel, exitVelocity: ev, launchAngle: la, pitchLocation: targetLocation, pitchType: pitch.type };
-                    } else {
-                        res = { status: 'hit', type: 'SINGLE', timingOffset: timingDiff, timingLabel, exitVelocity: ev, launchAngle: la, pitchLocation: targetLocation, pitchType: pitch.type };
-                    }
-                } else if (contactQuality > 0.3) {
-                    // WEAK CONTACT Zone
-                    if (roll < 0.3 + contactMod) {
-                        res = { status: 'hit', type: 'SINGLE', timingOffset: timingDiff, timingLabel, exitVelocity: ev, launchAngle: la, pitchLocation: targetLocation, pitchType: pitch.type };
-                    } else {
-                        res = { status: 'miss', type: 'OUT', timingOffset: timingDiff, timingLabel, exitVelocity: ev, launchAngle: la, pitchLocation: targetLocation, pitchType: pitch.type };
-                    }
-                } else if (absTiming < (strikes >= 2 ? 110 : 130) * factor) {
-                    res = { status: 'foul', type: 'FOUL', timingOffset: timingDiff, timingLabel, pitchLocation: targetLocation, pitchType: pitch.type };
+                } else if (absTiming < 180 * factor && pciPenalty > 0.1) {
+                    // Tick / Foul Tip fallback for very poor contact quality
+                    res = { status: 'foul', type: 'FOUL', timingOffset: timingDiff, timingLabel, exitVelocity: ev * 0.4, launchAngle: 45, pitchLocation: targetLocation, pitchType: pitch.type };
                 } else {
                     res = { status: 'miss', type: 'STRIKE', timingOffset: timingDiff, timingLabel, pitchLocation: targetLocation, pitchType: pitch.type };
                 }
