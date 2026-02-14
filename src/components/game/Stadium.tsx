@@ -1,27 +1,60 @@
-import React, { useRef } from 'react';
+import React, { useRef, Suspense } from 'react';
 import { useFrame, useLoader } from '@react-three/fiber';
+import { Instances, Instance } from '@react-three/drei';
 import * as THREE from 'three';
+import * as BufferGeometryUtils from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import heroLogo from '../../assets/logo-scratch-hero.png';
+import fenceWordmark from '../../assets/bgreen.png';
 import { MLB_CONSTANTS } from '../../lib/constants';
 
-// Shared geometries and materials for performance
+// --- Shared Geometries (Hoisted for Performance) ---
 const BULB_GEOM = new THREE.PlaneGeometry(0.75, 0.75);
+const STRIPE_GEOM = new THREE.PlaneGeometry(150, 5);
+const MOUND_GEOM = new THREE.CylinderGeometry(0.8, 2.75, 0.25, 16);
+const DIRT_GEOM = new THREE.CircleGeometry(28, 32);
+const INFIELD_GEOM = new THREE.CircleGeometry(20, 32);
+const PITCHER_BODY_GEOM = new THREE.CapsuleGeometry(0.22, 0.8, 2, 4);
+const PITCHER_HEAD_GEOM = new THREE.SphereGeometry(0.18, 8, 8);
+const PITCHER_LIMB_GEOM = new THREE.CapsuleGeometry(0.09, 0.8, 2, 4);
+const PITCHER_ARM_GEOM = new THREE.CapsuleGeometry(0.07, 0.6, 2, 4);
+const BOX_GEOM = new THREE.BoxGeometry(1, 1, 1);
+const PLANE_GEOM = new THREE.PlaneGeometry(1, 1);
+const FENCE_GEOM = new THREE.BoxGeometry(200, 8, 2);
+const RUBBER_GEOM = new THREE.PlaneGeometry(0.6, 0.15);
+const FOUL_LINE_GEOM = new THREE.PlaneGeometry(0.12, 180);
+const BATTER_BOX_GEOM = new THREE.PlaneGeometry(0.8, 1.2);
+const BATTER_BORDER_H_GEOM = new THREE.PlaneGeometry(0.82, 0.05);
+const BATTER_BORDER_V_GEOM = new THREE.PlaneGeometry(0.05, 1.25);
+
+// --- Shared Materials ---
 const BULB_MAT = new THREE.MeshStandardMaterial({
     color: "#fff",
     emissive: "#ffffff",
-    emissiveIntensity: 20,
+    emissiveIntensity: 10,
     toneMapped: false
 });
-
-const STRIPE_GEOM = new THREE.PlaneGeometry(150, 5);
 const DARK_MAT = new THREE.MeshStandardMaterial({ color: "#1e441e", roughness: 1 });
 const LIGHT_MAT = new THREE.MeshStandardMaterial({ color: "#1a3c1a", roughness: 1 });
+const DIRT_MAT = new THREE.MeshStandardMaterial({ color: "#5d4037", roughness: 1 });
+const MOUND_MAT = new THREE.MeshStandardMaterial({ color: "#5d4037", roughness: 0.9 });
+const PITCHER_MAT = new THREE.MeshStandardMaterial({ color: "#1a1a1a", roughness: 0.5 });
+const PITCHER_LIMB_MAT = new THREE.MeshStandardMaterial({ color: "#111" });
+const WHITE_MAT = new THREE.MeshStandardMaterial({ color: "#fff", roughness: 0.5 });
+const FENCE_MAT = new THREE.MeshStandardMaterial({ color: "#17320b" });
+const TOWER_MAT = new THREE.MeshStandardMaterial({ color: "#1a1a1a", metalness: 0.9, roughness: 0.1 });
+const PANEL_MAT = new THREE.MeshStandardMaterial({ color: "#111", metalness: 0.8, roughness: 0.2 });
+const GLOW_MAT = new THREE.MeshBasicMaterial({ color: "#ffffff", transparent: true, opacity: 0.15, blending: THREE.AdditiveBlending, depthWrite: false });
+const FOUL_MAT = new THREE.MeshBasicMaterial({ color: "#ffffff", transparent: true, opacity: 0.8 });
+const BOX_GHOST_MAT = new THREE.MeshBasicMaterial({ color: "#fff", transparent: true, opacity: 0.05 });
+const BOX_CHALK_MAT = new THREE.MeshBasicMaterial({ color: "#ffffff", transparent: true, opacity: 0.3 });
 
-
-function Pitcher({ machineState, windupStartTime }: { machineState: string, windupStartTime: number }) {
+const Pitcher = React.memo(({ machineState, windupStartTime, handedness }: { machineState: string, windupStartTime: number, handedness: 'LEFT' | 'RIGHT' }) => {
     const groupRef = useRef<THREE.Group>(null);
     const legRef = useRef<THREE.Group>(null);
     const armRef = useRef<THREE.Group>(null);
+
+    const isLHP = handedness === 'LEFT';
+    const sideMult = isLHP ? -1 : 1;
 
     useFrame((state) => {
         if (!groupRef.current || !legRef.current || !armRef.current) return;
@@ -42,12 +75,12 @@ function Pitcher({ machineState, windupStartTime }: { machineState: string, wind
             }
 
             armRef.current.rotation.x = -Math.PI * 0.8 * progress;
-            armRef.current.rotation.z = Math.PI / 4 * progress;
+            armRef.current.rotation.z = (Math.PI / 4 * progress) * sideMult;
         } else if (machineState === 'pitching') {
             legRef.current.rotation.x = 0;
             legRef.current.position.y = 0.4;
             armRef.current.rotation.x = -Math.PI * 0.5;
-            armRef.current.rotation.z = -Math.PI / 2;
+            armRef.current.rotation.z = -Math.PI / 2 * sideMult;
         } else {
             const t = state.clock.getElapsedTime();
             groupRef.current.rotation.y = Math.sin(t * 0.5) * 0.05;
@@ -60,97 +93,52 @@ function Pitcher({ machineState, windupStartTime }: { machineState: string, wind
 
     return (
         <group ref={groupRef} position={[0, 0.15, -MLB_CONSTANTS.DISTANCE_MOUND_TO_PLATE - 0.3]}>
-            {/* Torso */}
-            <mesh position={[0, 1.1, 0]}>
-                <capsuleGeometry args={[0.22, 0.8, 4, 8]} />
-                <meshStandardMaterial color="#1a1a1a" roughness={0.5} />
-            </mesh>
-            {/* Head */}
-            <mesh position={[0, 1.8, 0]}>
-                <sphereGeometry args={[0.18, 16, 16]} />
-                <meshStandardMaterial color="#222" />
-            </mesh>
-            {/* Plant Leg (Left Leg for a Lefty) */}
-            <mesh position={[0.12, 0.4, 0]}>
-                <capsuleGeometry args={[0.09, 0.8, 4, 8]} />
-                <meshStandardMaterial color="#111" />
-            </mesh>
-            {/* Kick Leg (Right Leg for a Lefty) */}
-            <group ref={legRef} position={[-0.12, 0.4, 0]}>
-                <mesh position={[0, 0, 0]}>
-                    <capsuleGeometry args={[0.09, 0.8, 4, 8]} />
-                    <meshStandardMaterial color="#111" />
-                </mesh>
+            <mesh position={[0, 1.1, 0]} geometry={PITCHER_BODY_GEOM} material={PITCHER_MAT} />
+            <mesh position={[0, 1.8, 0]} geometry={PITCHER_HEAD_GEOM} material={PITCHER_MAT} />
+            {/* Landing Leg - stays planted */}
+            <mesh position={[0.12 * sideMult, 0.4, 0]} geometry={PITCHER_LIMB_GEOM} material={PITCHER_LIMB_MAT} />
+            {/* Lift Leg */}
+            <group ref={legRef} position={[-0.12 * sideMult, 0.4, 0]}>
+                <mesh position={[0, 0, 0]} geometry={PITCHER_LIMB_GEOM} material={PITCHER_LIMB_MAT} />
             </group>
-            {/* Throwing Arm (Left Arm) */}
-            <group ref={armRef} position={[0.25, 1.5, 0]}>
-                <mesh position={[0, -0.3, 0]}>
-                    <capsuleGeometry args={[0.07, 0.6, 4, 8]} />
-                    <meshStandardMaterial color="#111" />
-                </mesh>
+            {/* Throwing Arm */}
+            <group ref={armRef} position={[0.35 * sideMult, 1.5, 0]}>
+                <mesh position={[0, -0.3, 0]} geometry={PITCHER_ARM_GEOM} material={PITCHER_LIMB_MAT} />
             </group>
         </group>
     );
-}
+});
 
-function LightTower({ position }: { position: [number, number, number] }) {
+const LightTower = React.memo(({ position }: { position: [number, number, number] }) => {
     const groupRef = useRef<THREE.Group>(null);
 
-    // Precise rotation to face Home Plate (0,0,0)
-    // Using useLayoutEffect to ensure it happens before first render
     React.useLayoutEffect(() => {
         if (groupRef.current) {
             groupRef.current.lookAt(0, 1.5, 0);
-
         }
     }, [position]);
 
     return (
         <group position={position}>
-            {/* Tower Structure */}
-            <mesh position={[0, 15, 0]}>
-                <boxGeometry args={[0.8, 30, 0.8]} />
-                <meshStandardMaterial color="#1a1a1a" metalness={0.9} roughness={0.1} />
-            </mesh>
-
-            {/* Light Panel */}
+            <mesh position={[0, 15, 0]} scale={[0.8, 30, 0.8]} geometry={BOX_GEOM} material={TOWER_MAT} />
             <group position={[0, 28, 0]}>
                 <group ref={groupRef}>
                     <group position={[0, 0, 1.2]}>
-                        <mesh>
-                            <boxGeometry args={[4, 3, 0.5]} />
-                            <meshStandardMaterial color="#111" metalness={0.8} roughness={0.2} />
-                        </mesh>
-
-                        {/* Light Bulbs - Using Instanced Mesh would be better, but for 12 it's okay. 
-                            However, let's at least use the shared geometry/material. */}
-                        {[...Array(12)].map((_, i) => (
-                            <mesh
-                                key={i}
-                                geometry={BULB_GEOM}
-                                material={BULB_MAT}
-                                position={[(i % 4 - 1.5) * 0.9, (Math.floor(i / 4) - 1) * 0.9, 0.26]}
-                            />
-                        ))}
-
-
-                        {/* Flare overlay */}
-                        <mesh position={[0, 0, 0.4]} scale={[6, 5, 1]}>
-                            <planeGeometry args={[1, 1]} />
-                            <meshBasicMaterial
-                                color="#ffffff"
-                                transparent
-                                opacity={0.2}
-                                blending={THREE.AdditiveBlending}
-                                depthWrite={false}
-                            />
-                        </mesh>
-
+                        <mesh scale={[4, 3, 0.5]} geometry={BOX_GEOM} material={PANEL_MAT} />
+                        <Instances geometry={BULB_GEOM} material={BULB_MAT}>
+                            {[...Array(12)].map((_, i) => (
+                                <Instance
+                                    key={i}
+                                    position={[(i % 4 - 1.5) * 0.9, (Math.floor(i / 4) - 1) * 0.9, 0.26]}
+                                />
+                            ))}
+                        </Instances>
+                        <mesh position={[0, 0, 0.4]} scale={[6, 5, 1]} geometry={PLANE_GEOM} material={GLOW_MAT} />
                         <spotLight
                             position={[0, 0, 1]}
                             angle={Math.PI / 3}
                             penumbra={0.3}
-                            intensity={300}
+                            intensity={200}
                             distance={150}
                             color="#fff8e1"
                             castShadow={false}
@@ -160,138 +148,128 @@ function LightTower({ position }: { position: [number, number, number] }) {
             </group>
         </group>
     );
-}
+});
 
-
-
-function BearHandsLogo() {
+const BearHandsLogo = React.memo(() => {
     const texture = useLoader(THREE.TextureLoader, heroLogo);
-
     return (
-        <group rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.012, 1.0]}>
-            <mesh>
-                <planeGeometry args={[1.75, 1.75]} />
-                <meshBasicMaterial map={texture} transparent opacity={0.6} />
-
+        <group rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.025, 1.1]}>
+            <mesh geometry={PLANE_GEOM}>
+                <meshBasicMaterial map={texture} transparent opacity={0.8} />
             </mesh>
         </group>
     );
+});
 
-}
+const FenceWordmark = React.memo(() => {
+    const texture = useLoader(THREE.TextureLoader, fenceWordmark);
+    return (
+        <mesh position={[0, 11, -122.5]} geometry={PLANE_GEOM} scale={[72, 24, 1]}>
+            <meshBasicMaterial map={texture} />
+        </mesh>
+    );
+});
 
-export function Stadium({ machineState, windupStartTime }: { machineState: string, windupStartTime: number }) {
+export const Stadium = React.memo(({ machineState, windupStartTime, pitcherHandedness }: { machineState: string, windupStartTime: number, pitcherHandedness: 'LEFT' | 'RIGHT' }) => {
+
+    // --- Merged Chalk Markings (Major Performance Gain: 1 Draw Call instead of 10+) ---
+    const chalkGeom = React.useMemo(() => {
+        const lines: THREE.BufferGeometry[] = [];
+
+        // Foul Lines
+        const l1 = FOUL_LINE_GEOM.clone();
+        l1.applyMatrix4(new THREE.Matrix4().makeRotationX(-Math.PI / 2));
+        l1.applyMatrix4(new THREE.Matrix4().makeRotationZ(-Math.PI / 4));
+        l1.translate(63.64, 0.01, -63.64);
+        lines.push(l1);
+
+        const l2 = FOUL_LINE_GEOM.clone();
+        l2.applyMatrix4(new THREE.Matrix4().makeRotationX(-Math.PI / 2));
+        l2.applyMatrix4(new THREE.Matrix4().makeRotationZ(Math.PI / 4));
+        l2.translate(-63.64, 0.01, -63.64);
+        lines.push(l2);
+
+        // Batter's Boxes Borders
+        [0.7, -0.7].map((side) => {
+            [0.6, -0.6].map((z) => {
+                const h = BATTER_BORDER_H_GEOM.clone();
+                h.applyMatrix4(new THREE.Matrix4().makeRotationX(-Math.PI / 2));
+                h.translate(side, 0.011, z);
+                lines.push(h);
+            });
+            [0.4, -0.4].map((x) => {
+                const v = BATTER_BORDER_V_GEOM.clone();
+                v.applyMatrix4(new THREE.Matrix4().makeRotationX(-Math.PI / 2));
+                v.translate(side + x, 0.011, 0);
+                lines.push(v);
+            });
+        });
+
+        return BufferGeometryUtils.mergeGeometries(lines);
+    }, []);
+
     return (
         <group>
-            <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.1, -20]} receiveShadow>
-                <planeGeometry args={[150, 200]} />
+            {/* Grass Base */}
+            <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.1, -25]} receiveShadow>
+                <planeGeometry args={[150, 250]} />
                 <meshStandardMaterial color="#1a3c1a" roughness={1} />
             </mesh>
 
-            {/* Grass Stripes - Manual Instancing for clarity but optimized with shared geoms/mats */}
-            {[...Array(20)].map((_, i) => (
-                <mesh
-                    key={i}
-                    geometry={STRIPE_GEOM}
-                    material={i % 2 === 0 ? DARK_MAT : LIGHT_MAT}
-                    rotation={[-Math.PI / 2, 0, 0]}
-                    position={[0, -0.095, -i * 10 - 10]}
-                />
-            ))}
+            <Instances geometry={STRIPE_GEOM} material={DARK_MAT}>
+                {[...Array(10)].map((_, i) => (
+                    <Instance
+                        key={i}
+                        position={[0, -0.095, -(i * 2) * 10 - 10]}
+                        rotation={[-Math.PI / 2, 0, 0]}
+                    />
+                ))}
+            </Instances>
+            <Instances geometry={STRIPE_GEOM} material={LIGHT_MAT}>
+                {[...Array(10)].map((_, i) => (
+                    <Instance
+                        key={i}
+                        position={[0, -0.095, -(i * 2 + 1) * 10 - 10]}
+                        rotation={[-Math.PI / 2, 0, 0]}
+                    />
+                ))}
+            </Instances>
 
-
-            <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.09, -5]} receiveShadow>
-                <circleGeometry args={[28, 64]} />
-                <meshStandardMaterial color="#5d4037" roughness={1} />
-            </mesh>
-
-            <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.098, -100]}>
-                <planeGeometry args={[200, 20]} />
-                <meshStandardMaterial color="#8d6e63" roughness={1} />
-            </mesh>
-
-            <mesh position={[0, 4, -110]}>
-                <boxGeometry args={[200, 8, 2]} />
-                <meshStandardMaterial color="#0b2e0b" />
-            </mesh>
+            <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.09, -5]} geometry={DIRT_GEOM} material={DIRT_MAT} receiveShadow />
+            <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.098, -122]} geometry={PLANE_GEOM} scale={[200, 20, 1]} material={DIRT_MAT} />
+            <mesh position={[0, 4, -122]} geometry={FENCE_GEOM} material={FENCE_MAT} />
 
             <group position={[0, 0, -MLB_CONSTANTS.DISTANCE_MOUND_TO_PLATE]}>
-                <mesh position={[0, 0.1, 0]} receiveShadow>
-                    <cylinderGeometry args={[0.8, 2.75, 0.25, 64]} />
-                    <meshStandardMaterial color="#5d4037" roughness={0.9} />
-                </mesh>
-
-                <mesh position={[0, 0.226, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-                    <planeGeometry args={[0.6, 0.15]} />
-                    <meshStandardMaterial color="#fff" roughness={0.5} />
-                </mesh>
-
-                <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.01, 0]}>
-                    <circleGeometry args={[3.0, 64]} />
-                    <meshStandardMaterial color="#5d4037" roughness={1} depthWrite={false} />
+                <mesh position={[0, 0.1, 0]} geometry={MOUND_GEOM} material={DIRT_MAT} receiveShadow />
+                <mesh position={[0, 0.226, 0]} rotation={[-Math.PI / 2, 0, 0]} geometry={RUBBER_GEOM} material={WHITE_MAT} />
+                <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.01, 0]} material={DIRT_MAT}>
+                    <circleGeometry args={[3.0, 16]} />
                 </mesh>
             </group>
 
-            <Pitcher machineState={machineState} windupStartTime={windupStartTime} />
-            <React.Suspense fallback={null}>
+            <Pitcher machineState={machineState} windupStartTime={windupStartTime} handedness={pitcherHandedness} />
+
+            <Suspense fallback={null}>
                 <BearHandsLogo />
-            </React.Suspense>
+                <FenceWordmark />
+            </Suspense>
 
             <LightTower position={[60, 0, -80]} />
             <LightTower position={[-60, 0, -80]} />
             <LightTower position={[45, 0, 20]} />
             <LightTower position={[-45, 0, 20]} />
 
-            {/* Infield Grass Island */}
-            <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.085, -28]} receiveShadow>
-                <circleGeometry args={[20, 64]} />
-                <meshStandardMaterial color="#1a3c1a" roughness={1} />
-            </mesh>
+            <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.085, -28]} geometry={INFIELD_GEOM} material={LIGHT_MAT} receiveShadow />
 
-            {/* Foul Lines */}
-            <group position={[0, 0.01, 0]}>
-                {/* 1st Base Line (Starts at outer top corner of right box: 1.1, -0.6) */}
-                <mesh rotation={[-Math.PI / 2, 0, -Math.PI / 4]} position={[36.45, -0.08, -35.95]}>
-                    <planeGeometry args={[0.12, 100]} />
-                    <meshBasicMaterial color="#ffffff" transparent opacity={0.9} />
-                </mesh>
-                {/* 3rd Base Line (Starts at outer top corner of left box: -1.1, -0.6) */}
-                <mesh rotation={[-Math.PI / 2, 0, Math.PI / 4]} position={[-36.45, -0.08, -35.95]}>
-                    <planeGeometry args={[0.12, 100]} />
-                    <meshBasicMaterial color="#ffffff" transparent opacity={0.9} />
-                </mesh>
-            </group>
+            {/* Render all chalk markings in one draw call */}
+            <mesh geometry={chalkGeom} material={BOX_CHALK_MAT} />
 
-            {/* Batter's Boxes with Weathered Chalk */}
+            {/* Batter's Box Semi-transparent Ghost Areas (Still separate for blending) */}
             <group position={[0, -0.07, 0]}>
                 {[0.7, -0.7].map((side) => (
-                    <group key={side} position={[side, 0, 0]}>
-                        {/* Worn Center Area */}
-                        <mesh rotation={[-Math.PI / 2, 0, 0]}>
-                            <planeGeometry args={[0.8, 1.2]} />
-                            <meshBasicMaterial color="#fff" transparent opacity={0.05} />
-                        </mesh>
-
-                        {/* Chalk Outlines (Weathered/Incomplete) */}
-                        <group position={[0, 0.001, 0]}>
-                            {/* Top/Bottom Lines */}
-                            {[0.6, -0.6].map((z) => (
-                                <mesh key={z} rotation={[-Math.PI / 2, 0, 0]} position={[0, 0, z]}>
-                                    <planeGeometry args={[0.82, 0.05]} />
-                                    <meshBasicMaterial color="#ffffff" transparent opacity={0.4} />
-                                </mesh>
-                            ))}
-                            {/* Side Lines */}
-                            {[0.4, -0.4].map((x) => (
-                                <mesh key={x} rotation={[-Math.PI / 2, 0, 0]} position={[x, 0, 0]}>
-                                    <planeGeometry args={[0.05, 1.25]} />
-                                    <meshBasicMaterial color="#ffffff" transparent opacity={0.4} />
-                                </mesh>
-                            ))}
-
-                        </group>
-                    </group>
+                    <mesh key={side} position={[side, 0, 0]} rotation={[-Math.PI / 2, 0, 0]} geometry={BATTER_BOX_GEOM} material={BOX_GHOST_MAT} />
                 ))}
             </group>
         </group>
     );
-}
+});

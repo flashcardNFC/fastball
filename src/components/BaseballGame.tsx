@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Canvas } from '@react-three/fiber';
-import { Stars, Environment } from '@react-three/drei';
+import { Stars, Environment, AdaptiveDpr, AdaptiveEvents, BakeShadows, Preload } from '@react-three/drei';
 
 // Libs
 import { MLB_CONSTANTS } from '../lib/constants';
@@ -30,7 +30,12 @@ import TournamentBracket from './TournamentBracket';
 // Types
 import type { Pitch, PitchResult, GameState, Difficulty, TeamStats, PlayerStats, TournamentState, Match, Team } from '../types/game';
 
-export default function BaseballGame() {
+interface BaseballGameProps {
+    skipTeamCreation?: boolean;
+    skipStartScreen?: boolean;
+}
+
+export default function BaseballGame({ skipTeamCreation = false, skipStartScreen = false }: BaseballGameProps) {
     // --- Hooks ---
     const { saveGameResult } = useGameStats();
     const { profile } = useProfile();
@@ -38,7 +43,7 @@ export default function BaseballGame() {
 
     // --- State ---
     const [gameState, setGameState] = useState<GameState>({
-        inning: 1, isTop: true, outs: 0, balls: 0, strikes: 0, score: { player: 0, computer: 0 }, runners: [false, false, false], history: [], gameOver: false
+        inning: 1, isTop: true, outs: 0, balls: 0, strikes: 0, score: { player: 0, computer: 0 }, runners: [false, false, false], history: [], gameOver: false, pitcherHandedness: Math.random() > 0.5 ? 'RIGHT' : 'LEFT'
     });
 
     const [machineState, setMachineState] = useState<'idle' | 'windup' | 'pitching' | 'flight' | 'result'>('idle');
@@ -48,9 +53,15 @@ export default function BaseballGame() {
     const pciPositionRef = useRef({ x: 0, y: 1.1 });
     const [visualSwingTime, setVisualSwingTime] = useState<number | null>(null);
     const [difficulty, setDifficulty] = useState<Difficulty>('PRO');
-    const [gameStarted, setGameStarted] = useState(false);
-    const [teamStats, setTeamStats] = useState<TeamStats>({ name: '', speed: 0, contact: 0, power: 0, handedness: 'LEFT' });
-    const [showTeamCreation, setShowTeamCreation] = useState(true);
+    const [gameStarted, setGameStarted] = useState(skipStartScreen);
+    const [teamStats, setTeamStats] = useState<TeamStats>({
+        name: skipTeamCreation ? 'Dev Team' : '',
+        speed: 5,
+        contact: 5,
+        power: 5,
+        handedness: 'RIGHT'
+    });
+    const [showTeamCreation, setShowTeamCreation] = useState(!skipTeamCreation);
     const [opponentTeam, setOpponentTeam] = useState<TeamStats | null>(null);
     const [tournament, setTournament] = useState<TournamentState | null>(null);
     const [showBracket, setShowBracket] = useState(false);
@@ -59,6 +70,7 @@ export default function BaseballGame() {
     const [playerStats, setPlayerStats] = useState<PlayerStats>({
         hits: 0, atBats: 0, homeRuns: 0, tournamentWins: 0
     });
+    const [matchStats, setMatchStats] = useState({ hits: 0, atBats: 0, homeRuns: 0 });
     const [showLeaderboard, setShowLeaderboard] = useState(false);
     const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
     const contactPosRef = useRef<[number, number, number]>([0, 0, 0]);
@@ -71,6 +83,7 @@ export default function BaseballGame() {
     const touchStartPos = useRef<{ x: number, y: number } | null>(null);
     const pciStartPos = useRef<{ x: number, y: number } | null>(null);
     const pitchHistoryRef = useRef<PitchHistory[]>([]);
+    const gameBallRef = useRef<THREE.Mesh | null>(null);
 
     // --- Effects ---
     useEffect(() => {
@@ -117,21 +130,25 @@ export default function BaseballGame() {
             if (!gameResultSavedRef.current && difficulty === 'MLB') {
                 gameResultSavedRef.current = true;
                 saveGameResult({
-                    hits: playerStats.hits,
-                    atBats: playerStats.atBats,
-                    homeRuns: playerStats.homeRuns,
+                    hits: matchStats.hits,
+                    atBats: matchStats.atBats,
+                    homeRuns: matchStats.homeRuns,
                     tournamentWin: false,
                     score: gameState.score.player,
                 });
             }
         }
-    }, [gameState, gameStarted]);
+    }, [gameState, gameStarted, matchStats.hits, matchStats.atBats, matchStats.homeRuns]);
 
-    // Reset the saved flag and set side change timer when a new game starts
+    // Reset the saved flag and match stats when a new game starts
     useEffect(() => {
         if (gameStarted && !gameState.gameOver) {
             gameResultSavedRef.current = false;
             sideChangeTimeRef.current = performance.now();
+            // Only reset match stats if it's the beginning of a fresh game
+            if (gameState.inning === 1 && gameState.score.player === 0 && gameState.score.computer === 0 && gameState.outs === 0) {
+                setMatchStats({ hits: 0, atBats: 0, homeRuns: 0 });
+            }
         }
     }, [gameStarted, gameState.gameOver]);
 
@@ -171,17 +188,19 @@ export default function BaseballGame() {
         contactPosRef.current = pos;
         showContactSparkRef.current = true;
         lastHitResultRef.current = isHit ? 'hit' : 'miss';
-        setContactKey(k => k + 1); // single re-render to update spark
-        setTimeout(() => { showContactSparkRef.current = false; setContactKey(k => k + 1); }, 300);
+        setContactKey(k => k + 1);
+
+        setTimeout(() => { showContactSparkRef.current = false; setContactKey(k => k + 1); }, 350);
     }, []);
 
     const handleCompleteTournament = useCallback((userWon: boolean) => {
-        if (difficulty === 'MLB') {
+        if (difficulty === 'MLB' && userWon) {
+            // We only save the tournament win here. Game stats were already saved by the end-of-game useEffect.
             saveGameResult({
-                hits: playerStats.hits,
-                atBats: playerStats.atBats,
-                homeRuns: playerStats.homeRuns,
-                tournamentWin: userWon,
+                hits: 0,
+                atBats: 0,
+                homeRuns: 0,
+                tournamentWin: true,
                 score: gameState.score.player,
             });
         }
@@ -210,19 +229,17 @@ export default function BaseballGame() {
         if (result.type === 'STRIKE' && gameState.strikes === 2) pitchHistoryRef.current = [];
         if (result.status === 'hit' || result.type === 'OUT') pitchHistoryRef.current = [];
 
-        if (result.status === 'hit' || result.type === 'OUT') {
+        if (result.status === 'hit' || result.type === 'OUT' || result.type === 'FOUL') {
             setMachineState('flight');
-            setTimeout(() => processResult(result), 2500);
-        } else if (result.type === 'FOUL') {
-            setMachineState('flight');
-            setTimeout(() => processResult(result), 2000);
+            // Wait for handleSettled signal from the Ball component
         } else {
             setMachineState('result');
             setTimeout(() => processResult(result), 1500);
         }
     };
 
-    const processResult = (result: PitchResult) => {
+    const maxInnings = tournament ? 9 : 3;
+    const processResult = useCallback((result: PitchResult) => {
         setGameState(prev => {
             let { inning, isTop, outs, balls, strikes, score, runners } = { ...prev };
             let r = [...runners] as [boolean, boolean, boolean];
@@ -246,27 +263,65 @@ export default function BaseballGame() {
                 r = hit.runners as [boolean, boolean, boolean];
                 runs += hit.runs;
                 strikes = 0; balls = 0;
-                if (result.type === 'HOMERUN') setPlayerStats(s => ({ ...s, homeRuns: s.homeRuns + 1 }));
+                if (result.type === 'HOMERUN') {
+                    setPlayerStats(s => ({ ...s, homeRuns: s.homeRuns + 1 }));
+                    setMatchStats(s => ({ ...s, homeRuns: s.homeRuns + 1 }));
+                }
                 setPlayerStats(s => ({ ...s, hits: s.hits + 1, atBats: s.atBats + 1 }));
+                setMatchStats(s => ({ ...s, hits: s.hits + 1, atBats: s.atBats + 1 }));
             }
 
-            if (result.type === 'OUT' || strikes === 3) setPlayerStats(s => ({ ...s, atBats: s.atBats + 1 }));
+            if (result.type === 'OUT' || strikes === 3) {
+                setPlayerStats(s => ({ ...s, atBats: s.atBats + 1 }));
+                setMatchStats(s => ({ ...s, atBats: s.atBats + 1 }));
+            }
 
             if (isTop) score.player += runs; else score.computer += runs;
 
+            // Walk-off check: Bottom of last inning (or extra) and home team takes lead
+            if (!isTop && inning >= maxInnings && score.computer > score.player) {
+                return { ...prev, score, runners: [false, false, false], gameOver: true };
+            }
+
             if (outs === 3) {
-                if (!isTop && inning === 9) return { ...prev, score, runners: [false, false, false], gameOver: true };
+                const isRegulatedEnd = inning >= maxInnings;
+                const isTied = score.player === score.computer;
+
+                // Scenario A: Away (User) finishes Top of Last and is still losing
+                if (isTop && isRegulatedEnd && score.computer > score.player) {
+                    return { ...prev, score, runners: [false, false, false], gameOver: true };
+                }
+
+                // Scenario B: Home finishes Bottom of Last and result is decided
+                if (!isTop && isRegulatedEnd && !isTied) {
+                    return { ...prev, score, runners: [false, false, false], gameOver: true };
+                }
+
                 isTop = !isTop;
                 outs = 0; balls = 0; strikes = 0;
                 r = [false, false, false];
-                if (isTop) inning++;
+
+                if (isTop) {
+                    inning++;
+                }
+
+                // Randomize pitcher handedness for the new inning/turn
+                const pitcherHandedness = Math.random() > 0.5 ? 'RIGHT' : 'LEFT';
                 sideChangeTimeRef.current = performance.now();
+
+                return { ...prev, inning, isTop, outs, balls, strikes, score, runners: r as any, gameOver: false, pitcherHandedness };
             }
 
             return { ...prev, inning, isTop, outs, balls, strikes, score, runners: r as any, gameOver: false };
         });
         setMachineState('idle');
-    };
+    }, [gameState.balls, gameState.strikes, gameState.outs, gameState.inning, gameState.isTop, gameState.score, gameState.runners, maxInnings]);
+
+    const handleSettled = useCallback(() => {
+        if (pitchResult) {
+            processResult(pitchResult);
+        }
+    }, [pitchResult, processResult]);
 
     const advanceRunners = (r: [boolean, boolean, boolean], type: 'SINGLE' | 'DOUBLE' | 'TRIPLE' | 'HOMERUN') => {
         let runs = 0;
@@ -302,10 +357,21 @@ export default function BaseballGame() {
             const runsWon = Math.round(cpuRuns);
             if (!isTop) score.computer += runsWon; else score.player += runsWon;
 
-            if (!isTop && inning === 9) return { ...prev, score, gameOver: true };
+            const isRegulatedEnd = inning >= maxInnings;
+            const isTied = score.player === score.computer;
+
+            // Scenario A: Away finishes Top of Last and is still losing
+            if (isTop && isRegulatedEnd && score.computer > score.player) return { ...prev, score, gameOver: true };
+
+            // Scenario B: Home finishes Bottom of Last and result is decided
+            if (!isTop && isRegulatedEnd && !isTied) return { ...prev, score, gameOver: true };
+
             isTop = !isTop; outs = 0;
-            if (isTop) inning++;
-            return { ...prev, inning, isTop, outs, score };
+            if (isTop) {
+                inning++;
+            }
+            const pitcherHandedness = Math.random() > 0.5 ? 'RIGHT' : 'LEFT';
+            return { ...prev, inning, isTop, outs, score, pitcherHandedness };
         });
     };
 
@@ -338,7 +404,10 @@ export default function BaseballGame() {
 
         const swingTimer = setTimeout(() => {
             // Chance to take the pitch if it's a ball
-            const isStrike = Math.abs(targetLocation.x) <= 0.35 && targetLocation.y >= 0.6 && targetLocation.y <= 1.6;
+            // AI now accounts for pitch break (target + movement)
+            const finalX = targetLocation.x + (currentPitch.movement?.x || 0);
+            const finalY = targetLocation.y + (currentPitch.movement?.y || 0);
+            const isStrike = Math.abs(finalX) <= 0.35 && finalY >= 0.6 && finalY <= 1.6;
             const takeChance = isStrike ? 0.1 : 0.6;
 
             if (Math.random() > takeChance) {
@@ -408,9 +477,9 @@ export default function BaseballGame() {
 
             // Relative movement for both touch and mouse drag
             if (touchStartPos.current && pciStartPos.current) {
-                // Higher sensitivity for easier "flicking" with the thumb
-                const dx = (clientX - touchStartPos.current.x) / window.innerWidth * 3.0;
-                const dy = (touchStartPos.current.y - clientY) / window.innerHeight * 4.0;
+                // Increased sensitivity for even tighter, more responsive PCI control
+                const dx = (clientX - touchStartPos.current.x) / window.innerWidth * 4.5;
+                const dy = (touchStartPos.current.y - clientY) / window.innerHeight * 5.5;
 
                 pciPositionRef.current = {
                     x: Math.max(-0.8, Math.min(0.8, pciStartPos.current.x + dx)),
@@ -481,7 +550,18 @@ export default function BaseballGame() {
 
 
             {/* HUD */}
-            <div style={{ position: 'absolute', top: 0, left: 0, right: 0, padding: isMobile ? '4px 3px' : '10px', display: 'flex', flexDirection: isMobile ? 'column' : 'row', gap: isMobile ? '2px' : '8px', pointerEvents: 'none', zIndex: 100 }}>
+            <div style={{
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                right: 0,
+                padding: isMobile ? 'calc(env(safe-area-inset-top, 0px) + 8px) 6px 4px 6px' : '15px 20px',
+                display: 'flex',
+                flexDirection: isMobile ? 'column' : 'row',
+                gap: isMobile ? '4px' : '12px',
+                pointerEvents: 'none',
+                zIndex: 100
+            }}>
                 {/* Row 1: Home + Score + Count */}
                 <div style={{ display: 'flex', gap: isMobile ? '2px' : '8px', width: '100%' }}>
                     <div onClick={() => setGameStarted(false)} style={{ flex: '0 0 auto', width: isMobile ? '32px' : '50px', height: isMobile ? '32px' : '50px', backgroundColor: 'rgba(255,255,255,0.08)', backdropFilter: 'blur(20px)', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', pointerEvents: 'auto', border: '1px solid rgba(255,255,255,0.1)', zIndex: 110 }}>
@@ -549,40 +629,44 @@ export default function BaseballGame() {
 
             {/* Canvas */}
             <div style={{ position: 'absolute', inset: 0 }}>
-                <Canvas shadows gl={{ antialias: false, powerPreference: 'high-performance' }}>
-                    <Camera isUserPitching={!gameState.isTop} />
+                <Canvas
+                    shadows
+                    dpr={[1, 1.5]} // Limit pixel density for major perf gain on Retina/High-DPI
+                    gl={{ antialias: false, powerPreference: 'high-performance' }}
+                    camera={{ fov: 75 }}
+                >
+                    <Camera isUserPitching={!gameState.isTop} machineState={machineState} ballRef={gameBallRef} />
 
-                    {/* Darker night sky background with subtle fog for depth */}
                     <color attach="background" args={['#020408']} />
                     <fog attach="fog" args={['#020408', 30, 250]} />
 
-                    {/* Ambient light for general visibility */}
-                    <ambientLight intensity={0.4} color="#fff8e1" />
-                    <hemisphereLight args={['#fff8e1', '#1a3c1a', 0.5]} />
+                    <ambientLight intensity={0.5} color="#fff8e1" />
+                    <hemisphereLight args={['#fff8e1', '#081208', 0.6]} />
 
-                    {/* Main Stadium "Floodlight" - casts the primary shadows */}
+                    {/* Main Stadium "Floodlight" - Optimized Shadow Camera */}
                     <directionalLight
                         position={[40, 50, 40]}
-                        intensity={2.5}
+                        intensity={2.8}
                         color="#ffffff"
                         castShadow
-                        shadow-mapSize={[1024, 1024]}
-                        shadow-camera-left={-60}
-                        shadow-camera-right={60}
-                        shadow-camera-top={60}
-                        shadow-camera-bottom={-60}
+                        shadow-mapSize={[512, 512]} // Half resolution for speed
+                        shadow-camera-left={-35}
+                        shadow-camera-right={35}
+                        shadow-camera-top={35}
+                        shadow-camera-bottom={-35}
+                        shadow-bias={-0.0005} // Reduce shadow acne
                     />
 
-                    {/* Fill point light for the batter area */}
-                    <pointLight position={[0, 5, 2]} intensity={15} distance={20} color="#fff8e1" />
+                    {/* Fill light for plate area - NO shadows for this one */}
+                    <pointLight position={[0, 5, 2]} intensity={20} distance={15} color="#fff8e1" />
 
                     <Environment preset="night" />
-                    <Stars radius={300} count={800} factor={4} fade speed={1} />
+                    <Stars radius={250} count={500} factor={3} fade speed={0.5} />
 
-                    <Stadium machineState={machineState} windupStartTime={windupStartTime} />
+                    <Stadium machineState={machineState} windupStartTime={windupStartTime} pitcherHandedness={gameState.pitcherHandedness} />
                     <HomePlate />
                     <StrikeZone />
-                    <PCI pciPositionRef={pciPositionRef} />
+                    <PCI pciPositionRef={pciPositionRef} teamStats={teamStats} />
                     <Ball
                         state={machineState}
                         onFinish={onPitchFinish}
@@ -595,6 +679,8 @@ export default function BaseballGame() {
                         difficulty={difficulty}
                         teamStats={teamStats}
                         strikes={gameState.strikes}
+                        onSettled={handleSettled}
+                        ballRef={gameBallRef}
                     />
                     <Bat
                         swingTime={visualSwingTime}
@@ -602,14 +688,37 @@ export default function BaseballGame() {
                         pciPositionRef={pciPositionRef}
                     />
                     <ContactSpark position={contactPosRef.current} active={showContactSparkRef.current} />
-                </Canvas>
 
+                    {/* Performance Utilities */}
+                    <AdaptiveDpr pixelated />
+                    <AdaptiveEvents />
+                    <BakeShadows />
+                    <Preload all />
+                </Canvas>
             </div>
 
             {/* Overlays */}
-            {showTeamCreation && <div style={{ position: 'absolute', inset: 0, zIndex: 500, backgroundColor: '#000', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><TeamCreationUI teamStats={teamStats} setTeamStats={setTeamStats} onContinue={() => setShowTeamCreation(false)} /></div>}
+            {showTeamCreation && (
+                <div style={{
+                    position: 'absolute',
+                    inset: 0,
+                    zIndex: 500,
+                    backgroundColor: '#000',
+                    overflowY: 'auto',
+                    padding: '40px 0',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center'
+                }}>
+                    <TeamCreationUI
+                        teamStats={teamStats}
+                        setTeamStats={setTeamStats}
+                        onContinue={() => setShowTeamCreation(false)}
+                    />
+                </div>
+            )}
 
-            {showBracket && tournament && <div style={{ position: 'absolute', inset: 0, zIndex: 400 }}><TournamentBracket tournament={tournament} onCompleteTournament={handleCompleteTournament} onPlayMatch={(matchId) => { const m = tournament.matches.find((x: Match) => x.id === matchId); if (m) { const oppId = m.team1Id === 'user' ? m.team2Id : m.team1Id; const opp = tournament.teams.find((t: Team) => t.id === oppId); setOpponentTeam(opp ? { ...opp.stats, name: opp.name } : null); setGameState({ ...gameState, inning: 1, isTop: true, outs: 0, score: { player: 0, computer: 0 }, runners: [false, false, false], gameOver: false }); setGameStarted(true); setShowBracket(false); } }} onSimulateMatch={(matchId: string) => { setTournament((prev: any) => { if (!prev) return null; const m = prev.matches.find((x: Match) => x.id === matchId); if (!m || !m.team1Id || !m.team2Id) return prev; const t1 = prev.teams.find((t: Team) => t.id === m.team1Id); const t2 = prev.teams.find((t: Team) => t.id === m.team2Id); const result = simulateOutcome(m, t1, t2); const updated = prev.matches.map((x: Match) => x.id === matchId ? { ...x, winnerId: result.winnerId, score: result.score } : x); const final = updated.map((match: Match) => { if (match.id === m.nextMatchId) { if (!match.team1Id) return { ...match, team1Id: result.winnerId }; if (!match.team2Id) return { ...match, team2Id: result.winnerId }; } if (match.id === m.loserMatchId) { const loserId = result.winnerId === m.team1Id ? m.team2Id : m.team1Id; if (!match.team1Id) return { ...match, team1Id: loserId }; if (!match.team2Id) return { ...match, team2Id: loserId }; } return match; }); return { ...prev, matches: final }; }); }} /></div>}
+            {showBracket && tournament && <div style={{ position: 'absolute', inset: 0, zIndex: 400 }}><TournamentBracket tournament={tournament} onCompleteTournament={handleCompleteTournament} onPlayMatch={(matchId) => { const m = tournament.matches.find((x: Match) => x.id === matchId); if (m) { const oppId = m.team1Id === 'user' ? m.team2Id : m.team1Id; const opp = tournament.teams.find((t: Team) => t.id === oppId); setOpponentTeam(opp ? { ...opp.stats, name: opp.name } : null); setGameState({ ...gameState, inning: 1, isTop: true, outs: 0, score: { player: 0, computer: 0 }, runners: [false, false, false], gameOver: false, pitcherHandedness: Math.random() > 0.5 ? 'RIGHT' : 'LEFT' }); setGameStarted(true); setShowBracket(false); } }} onSimulateMatch={(matchId: string) => { setTournament((prev: any) => { if (!prev) return null; const m = prev.matches.find((x: Match) => x.id === matchId); if (!m || !m.team1Id || !m.team2Id) return prev; const t1 = prev.teams.find((t: Team) => t.id === m.team1Id); const t2 = prev.teams.find((t: Team) => t.id === m.team2Id); const result = simulateOutcome(m, t1, t2); const updated = prev.matches.map((x: Match) => x.id === matchId ? { ...x, winnerId: result.winnerId, score: result.score } : x); const final = updated.map((match: Match) => { if (match.id === m.nextMatchId) { if (!match.team1Id) return { ...match, team1Id: result.winnerId }; if (!match.team2Id) return { ...match, team2Id: result.winnerId }; } if (match.id === m.loserMatchId) { const loserId = result.winnerId === m.team1Id ? m.team2Id : m.team1Id; if (!match.team1Id) return { ...match, team1Id: loserId }; if (!match.team2Id) return { ...match, team2Id: loserId }; } return match; }); return { ...prev, matches: final }; }); }} /></div>}
 
             {!gameStarted && !showTeamCreation && (
                 <StartScreen

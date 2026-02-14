@@ -18,8 +18,12 @@ interface BallProps {
     strikes: number;
     pciPositionRef: React.MutableRefObject<{ x: number; y: number }>;
     onContact?: (pos: [number, number, number], isHit: boolean) => void;
+    onSettled?: () => void;
+    ballRef?: React.MutableRefObject<THREE.Mesh | null>;
 }
 
+const BALL_GEOM = new THREE.SphereGeometry(MLB_CONSTANTS.BALL_RADIUS * 1.5, 16, 16);
+const BALL_MAT = new THREE.MeshStandardMaterial({ color: "#fff" });
 
 export function Ball({
     state,
@@ -32,7 +36,9 @@ export function Ball({
     teamStats,
     strikes,
     pciPositionRef,
-    onContact
+    onContact,
+    onSettled,
+    ballRef
 }: BallProps) {
 
     const meshRef = useRef<THREE.Mesh>(null);
@@ -40,6 +46,7 @@ export function Ball({
     const [localHasProcessed, setLocalHasProcessed] = useState(false);
     const [showTrail, setShowTrail] = useState(false);
     const hasFinishedRef = useRef(false);
+    const hasCalledSettled = useRef(false);
 
     // Performance: Pre-calculate color object so we don't 'new' it every frame/render
     const ballColor = React.useMemo(() => new THREE.Color(pitch.color), [pitch.color]);
@@ -54,14 +61,19 @@ export function Ball({
             setLocalHasProcessed(false);
             hasFinishedRef.current = false;
             flightData.current = null;
+            hasCalledSettled.current = false;
         }
     }, [state, pitch]); // Include pitch to reset trail on new selections
 
 
 
 
-    useFrame(() => {
+    useFrame((threeState, delta) => {
         if (!meshRef.current) return;
+        if (ballRef) ballRef.current = meshRef.current;
+
+        // Unified delta for frame-rate independence in iterative physics
+        const dt = Math.min(delta, 0.033);
 
         if (state === 'pitching' && !localHasProcessed) {
             const elapsed = (performance.now() - pitchStartTime) / 1000;
@@ -73,14 +85,12 @@ export function Ball({
                 return;
             }
 
-            // Delay trail slightly until ball is clear of pitcher's starting pos to avoid "jump" lines
-            if (elapsed > 0.05 && !showTrail) setShowTrail(true);
-
             const velocity = pitch.speed * MLB_CONSTANTS.MPH_TO_MS;
-            const totalTime = Math.abs(BALL_START_POS.z) / velocity;
+            const zStart = difficulty === 'MLB' ? -16.6 : BALL_START_POS.z;
+            const totalTime = Math.abs(zStart) / velocity;
             const progress = Math.min(elapsed / totalTime, 1.2);
 
-            const currentZ = BALL_START_POS.z + (velocity * elapsed);
+            const currentZ = zStart + (velocity * elapsed);
             const breakFactor = Math.pow(progress, 2);
             const currentX = THREE.MathUtils.lerp(BALL_START_POS.x, targetLocation.x + (pitch.movement.x * breakFactor), Math.min(progress, 1));
 
@@ -88,130 +98,215 @@ export function Ball({
             const vy0 = (targetLocation.y + (pitch.movement.y * 1) - BALL_START_POS.y - 0.5 * MLB_CONSTANTS.GRAVITY * T * T) / T;
             const currentY = BALL_START_POS.y + (vy0 * elapsed) + (0.5 * MLB_CONSTANTS.GRAVITY * elapsed * elapsed);
 
-
             meshRef.current.position.set(currentX, currentY, currentZ);
 
-            const CONTACT_WINDOW_Z = 0.5; // Tighter window for faster swing
-            if (swingRef.current !== null && Math.abs(currentZ) < CONTACT_WINDOW_Z && !localHasProcessed) {
-                // The bat takes ~105ms to reach the plate in the optimized animation.
-                const SWING_DELAY = 105;
+            // Decision/Contact Window Check
+            const CONTACT_WINDOW_Z = 0.5;
+            if (swingRef.current !== null && Math.abs(currentZ) < CONTACT_WINDOW_Z && !hasFinishedRef.current) {
+                const SWING_DELAY = 112;
                 const absolutePlateTime = pitchStartTime + totalTime * 1000;
                 const timingDiff = (swingRef.current + SWING_DELAY) - absolutePlateTime;
-
-                setLocalHasProcessed(true);
-
-                // Visual collision 'snap' to the Impact Plane (Z ~ 0.25)
-                // This ensures the ball is VISIBLY touching the barrel at the moment of impact.
-                meshRef.current.position.z = 0.25;
-
                 const absTiming = Math.abs(timingDiff);
-                const roll = Math.random();
                 let res: PitchResult;
 
-                const factor = difficulty === 'MLB' ? 0.75 : difficulty === 'ROOKIE' ? 1.5 : 1.0;
-                const powerMod = teamStats.power * 0.15;
-                const contactMod = teamStats.contact * 0.15;
+                const factor = difficulty === 'MLB' ? 1.0 : difficulty === 'PRO' ? 1.4 : 2.0;
 
-                const perfectWindow = 12 * factor;
-                const timingLabel = absTiming < perfectWindow ? 'PERFECT' : Math.abs(Math.round(timingDiff)) + 'MS ' + (timingDiff > 0 ? 'LATE' : 'EARLY');
-
-
-
-                // 1. Calculate PCI Accuracy (Plate Coverage)
+                // 1. Calculate PCI Proximity
+                const effectiveX = targetLocation.x + pitch.movement.x;
+                const effectiveY = targetLocation.y + pitch.movement.y;
                 const currentPci = pciPositionRef.current;
-                const pciDist = Math.sqrt(
-                    Math.pow(currentPci.x - targetLocation.x, 2) +
-                    Math.pow(currentPci.y - targetLocation.y, 2)
-                );
-                const pciPenalty = Math.max(0, 1 - (pciDist / 0.4)); // Coverage circle of ~0.4 units
+                const distH = currentPci.x - effectiveX;
+                const distV = currentPci.y - effectiveY;
+                let pciDist = Math.sqrt(distH * distH + distV * distV);
+                const pciBonus = 1 - (teamStats.contact * 0.02);
+                pciDist *= pciBonus;
 
+                // 2. Exit Velocity Mapping
+                let ev = 0;
+                let timingLabel = "";
+                const tPerfect = difficulty === 'MLB' ? 12 : difficulty === 'PRO' ? 22 : 35;
+                const tGreat = difficulty === 'MLB' ? 28 : difficulty === 'PRO' ? 45 : 65;
+                const tGood = difficulty === 'MLB' ? 45 : difficulty === 'PRO' ? 70 : 100;
+                const tSolid = difficulty === 'MLB' ? 70 : difficulty === 'PRO' ? 100 : 150;
 
-                // 2. Normal Distribution Exit Velocity (EV)
-                // Formula centers on a max EV, penalizes for timing and PCI gap
-                const timingPenalty = Math.max(0, 1 - (absTiming / (150 * factor)));
-                const peakEV = 105 + (powerMod * 10);
-                const minEV = 65;
-
-                // Base Quality of Hit (0 to 1)
-                const contactQuality = timingPenalty * 0.6 + pciPenalty * 0.4;
-
-                // Calculate EV with a normal-ish distribution (Standard Deviation logic)
-                const stdDev = 5;
-                const u1 = Math.random();
-                const u2 = Math.random();
-                const z0 = Math.sqrt(-2.0 * Math.log(u1)) * Math.cos(2.0 * Math.PI * u2);
-
-                const baseEV = minEV + (peakEV - minEV) * contactQuality;
-                const ev = Math.max(minEV, baseEV + (z0 * stdDev));
-
-                // 3. Launch Angle (LA)
-                // LA is slightly random but influenced by PCI vertical position (Under ball = Fly, Over ball = Ground)
-                const verticalOffset = (currentPci.y - targetLocation.y);
-                const baseLA = 15 + (verticalOffset * 60); // PCI under ball increases LA
-
-                const la = Math.max(-15, Math.min(50, baseLA + (Math.random() * 10 - 5)));
-
-                // 4. Outcomes determined by LA and EV
-                const sprayAngleRad = (timingDiff / 160) * (Math.PI / 3.2);
-
-                if (contactQuality > 0.85) {
-                    // BARREL Zone
-                    if (la >= 24 && la <= 34) {
-                        const dist = (ev * 3.8) + (la - 25) * 2;
-                        res = { status: 'hit', type: 'HOMERUN', timingOffset: timingDiff, timingLabel, exitVelocity: ev, launchAngle: la, distance: dist, pitchLocation: targetLocation, pitchType: pitch.type };
-                    } else {
-                        res = { status: 'hit', type: 'DOUBLE', timingOffset: timingDiff, timingLabel, exitVelocity: ev, launchAngle: la, pitchLocation: targetLocation, pitchType: pitch.type };
-                    }
-                } else if (contactQuality > 0.6) {
-                    // SOLID CONTACT Zone
-                    const isGap = Math.abs(Math.abs(sprayAngleRad) - 0.4) < 0.2;
-                    if (la >= 10 && la <= 25) {
-                        res = { status: 'hit', type: isGap ? 'DOUBLE' : 'SINGLE', timingOffset: timingDiff, timingLabel, exitVelocity: ev, launchAngle: la, pitchLocation: targetLocation, pitchType: pitch.type };
-                    } else if (la > 25) {
-                        res = { status: 'miss', type: 'OUT', timingOffset: timingDiff, timingLabel, exitVelocity: ev, launchAngle: la, pitchLocation: targetLocation, pitchType: pitch.type };
-                    } else {
-                        res = { status: 'hit', type: 'SINGLE', timingOffset: timingDiff, timingLabel, exitVelocity: ev, launchAngle: la, pitchLocation: targetLocation, pitchType: pitch.type };
-                    }
-                } else if (contactQuality > 0.3) {
-                    // WEAK CONTACT Zone
-                    if (roll < 0.3 + contactMod) {
-                        res = { status: 'hit', type: 'SINGLE', timingOffset: timingDiff, timingLabel, exitVelocity: ev, launchAngle: la, pitchLocation: targetLocation, pitchType: pitch.type };
-                    } else {
-                        res = { status: 'miss', type: 'OUT', timingOffset: timingDiff, timingLabel, exitVelocity: ev, launchAngle: la, pitchLocation: targetLocation, pitchType: pitch.type };
-                    }
-                } else if (absTiming < (strikes >= 2 ? 110 : 130) * factor) {
-                    res = { status: 'foul', type: 'FOUL', timingOffset: timingDiff, timingLabel, pitchLocation: targetLocation, pitchType: pitch.type };
-                } else {
-                    res = { status: 'miss', type: 'STRIKE', timingOffset: timingDiff, timingLabel, pitchLocation: targetLocation, pitchType: pitch.type };
+                if (absTiming <= tPerfect) {
+                    ev = 106 + (1 - absTiming / tPerfect) * 16;
+                    timingLabel = "PERFECT";
+                } else if (absTiming <= tGreat) {
+                    ev = 105 - ((absTiming - tPerfect) / (tGreat - tPerfect)) * 15;
+                    timingLabel = "GREAT";
+                } else if (absTiming <= tGood) {
+                    ev = 89 - ((absTiming - tGreat) / (tGood - tGreat)) * 15;
+                    timingLabel = "GOOD";
+                } else if (absTiming <= tSolid) {
+                    ev = 73 - ((absTiming - tGood) / (tSolid - tGood)) * 13;
+                    timingLabel = absTiming < (70 * factor) ? "SOLID" : (timingDiff > 0 ? "LATE" : "EARLY");
                 }
 
-                if (res.status === 'hit' || res.type === 'OUT' || res.type === 'FOUL') {
-                    if (onContact) onContact([meshRef.current.position.x, meshRef.current.position.y, meshRef.current.position.z], res.status === 'hit');
+                const pciPenalty = Math.max(0, 1 - (pciDist / (0.45 * factor)));
+                if (ev > 0) {
+                    const powerBonus = absTiming <= tPerfect ? (1 + teamStats.power * 0.02) : 1.0;
+                    ev = (ev * powerBonus) * (0.85 + 0.15 * pciPenalty);
+                }
 
-                    setShowTrail(false); // Reset trail for flight
+                // 3. Launch Angle
+                const baseLA = 18;
+                const launchSensitivity = 180;
+                let la = baseLA - (distV * launchSensitivity);
+                la += (Math.random() - 0.5) * 10 * (1 - pciPenalty);
+                la = Math.max(-20, Math.min(80, la));
+
+                // 4. Outcomes
+                const isTimingPerfect = absTiming <= tPerfect;
+                const isTimingGood = absTiming <= (45 * factor);
+                const exactTimingLabel = Math.abs(Math.round(timingDiff)) + "MS " + (timingDiff > 0 ? "LATE" : "EARLY");
+                const missThreshold = 0.55 * factor;
+                const foulThreshold = 0.38 * factor;
+
+                if (pciDist > missThreshold) {
+                    res = { status: 'miss', type: 'STRIKE', timingOffset: timingDiff, timingLabel: exactTimingLabel, pitchLocation: { x: effectiveX, y: effectiveY }, pitchType: pitch.type };
+                } else if (ev === 0) {
+                    if (absTiming < (strikes >= 2 ? 120 : 140) * factor) {
+                        res = { status: 'foul', type: 'FOUL', timingOffset: timingDiff, timingLabel: exactTimingLabel, exitVelocity: 75, launchAngle: 45, pitchLocation: { x: effectiveX, y: effectiveY }, pitchType: pitch.type };
+                    } else {
+                        res = { status: 'miss', type: 'STRIKE', timingOffset: timingDiff, timingLabel: exactTimingLabel, pitchLocation: { x: effectiveX, y: effectiveY }, pitchType: pitch.type };
+                    }
+                } else if (pciDist > foulThreshold && !isTimingPerfect) {
+                    res = { status: 'foul', type: 'FOUL', timingOffset: timingDiff, timingLabel: exactTimingLabel, exitVelocity: Math.max(ev, 60), launchAngle: la, pitchLocation: { x: effectiveX, y: effectiveY }, pitchType: pitch.type };
+                } else {
+                    const barrelThreshold = (isTimingPerfect ? 0.45 : 0.15) * factor;
+                    const solidThreshold = (isTimingGood ? 0.55 : 0.20) * factor;
+                    const isBarrel = ev >= 95 && la >= 18 && la <= 38 && pciDist < barrelThreshold;
+                    const isSolid = ev >= 88 && la >= 6 && la <= 40 && pciDist < solidThreshold;
+
+                    if (isBarrel && ev >= 102) {
+                        const dist = (ev * 3.9) + (la - 25) * 2;
+                        res = { status: 'hit', type: 'HOMERUN', timingOffset: timingDiff, timingLabel, exitVelocity: ev, launchAngle: la, distance: dist, pitchLocation: { x: effectiveX, y: effectiveY }, pitchType: pitch.type };
+                    } else if (isSolid || isBarrel) {
+                        if (la > 40) {
+                            res = { status: 'miss', type: 'OUT', timingOffset: timingDiff, timingLabel, exitVelocity: ev, launchAngle: la, pitchLocation: { x: effectiveX, y: effectiveY }, pitchType: pitch.type };
+                        } else if (la < 8) {
+                            res = { status: 'hit', type: 'SINGLE', timingOffset: timingDiff, timingLabel, exitVelocity: ev, launchAngle: la, pitchLocation: { x: effectiveX, y: effectiveY }, pitchType: pitch.type };
+                        } else {
+                            const hitType = (la > 20 && ev > 95) ? 'DOUBLE' : 'SINGLE';
+                            res = { status: 'hit', type: hitType, timingOffset: timingDiff, timingLabel, exitVelocity: ev, launchAngle: la, pitchLocation: { x: effectiveX, y: effectiveY }, pitchType: pitch.type };
+                        }
+                    } else {
+                        let hitChance = 0.15;
+                        if (ev >= 110) hitChance = 0.85;
+                        else if (ev >= 105) hitChance = 0.75;
+                        else if (ev >= 100) hitChance = 0.65;
+                        else if (ev >= 95) hitChance = 0.55;
+                        else if (ev >= 90) hitChance = 0.40;
+                        else if (ev >= 80) hitChance = 0.25;
+
+                        if (ev >= 55 && ev <= 90 && la < 10) hitChance += (teamStats.speed * 0.02);
+                        if (la >= 8 && la <= 32) hitChance += 0.15;
+                        if (la > 35) hitChance *= 0.2;
+                        if (la > 50) hitChance = 0;
+
+                        const vms = ev * MLB_CONSTANTS.MPH_TO_MS;
+                        const approxDist = (vms * vms * Math.sin(2 * la * Math.PI / 180)) / Math.abs(MLB_CONSTANTS.GRAVITY);
+
+                        if (approxDist > 121 && ev > 95 && la > 18 && la < 60) {
+                            const dist = (ev * 3.9) + (la - 25) * 2;
+                            res = { status: 'hit', type: 'HOMERUN', timingOffset: timingDiff, timingLabel, exitVelocity: ev, launchAngle: la, distance: dist, pitchLocation: { x: effectiveX, y: effectiveY }, pitchType: pitch.type };
+                        } else if (Math.random() < hitChance && la < 38) {
+                            const hitType = (la > 22 && ev >= 95) ? 'DOUBLE' : 'SINGLE';
+                            res = { status: 'hit', type: hitType, timingOffset: timingDiff, timingLabel: ev >= 95 ? timingLabel : "PIECED", exitVelocity: ev, launchAngle: la, pitchLocation: { x: effectiveX, y: effectiveY }, pitchType: pitch.type };
+                        } else {
+                            res = { status: 'miss', type: 'OUT', timingOffset: timingDiff, timingLabel: exactTimingLabel, exitVelocity: ev, launchAngle: la, pitchLocation: { x: effectiveX, y: effectiveY }, pitchType: pitch.type };
+                        }
+                    }
+                }
+
+                if (res.status === 'hit' || res.status === 'foul' || res.type === 'OUT') {
+                    const impactZ = 0.25;
+                    const contactPci = pciPositionRef.current;
+                    meshRef.current.position.set(
+                        (res.status === 'hit' || res.status === 'foul') ? contactPci.x : meshRef.current.position.x,
+                        (res.status === 'hit' || res.status === 'foul') ? contactPci.y : meshRef.current.position.y,
+                        impactZ
+                    );
+
+                    if (onContact) onContact([meshRef.current.position.x, meshRef.current.position.y, impactZ], res.status === 'hit');
+                    setShowTrail(false);
                     initFlight(res);
-
-                    // Restart trail for the ball escape path after a tiny delay
-                    setTimeout(() => {
-                        if (hasFinishedRef.current) setShowTrail(true);
-                    }, 16);
+                    setTimeout(() => { if (hasFinishedRef.current) setShowTrail(true); }, 16);
                 }
                 complete(res);
             }
 
+            if (currentZ > 1.3 && !hasFinishedRef.current) {
+                const finalX = targetLocation.x + pitch.movement.x;
+                const finalY = targetLocation.y + pitch.movement.y;
+                const isStrikeZone = Math.abs(finalX) <= 0.35 && finalY >= 0.6 && finalY <= 1.6;
+                const wasSwing = swingRef.current !== null;
+                const status = wasSwing ? 'strike' : (isStrikeZone ? 'strike' : 'ball');
+                const type = (wasSwing || isStrikeZone) ? 'STRIKE' : 'BALL';
+                const timingLabel = wasSwing ? "TOO LATE" : undefined;
 
-            if (currentZ > 1.3) {
-                const isStrike = Math.abs(targetLocation.x) <= 0.35 && targetLocation.y >= 0.6 && targetLocation.y <= 1.6;
-                setShowTrail(false); // Kill trail immediately on ball/strike
-                complete({ status: isStrike ? 'strike' : 'ball', type: isStrike ? 'STRIKE' : 'BALL', pitchLocation: targetLocation });
+                hasFinishedRef.current = true;
+                onFinish({ status, type, pitchLocation: { x: finalX, y: finalY }, timingLabel });
+            }
+
+            if (currentZ > 6.0) {
+                setShowTrail(false);
+                setLocalHasProcessed(true);
             }
 
         } else if (state === 'flight' && flightData.current) {
-            const elapsed = (performance.now() - flightData.current.startTime) / 1000;
-            meshRef.current.position.x += flightData.current.v0.x * 0.016;
-            meshRef.current.position.z += flightData.current.v0.z * 0.016;
-            meshRef.current.position.y += (flightData.current.v0.y + MLB_CONSTANTS.GRAVITY * elapsed) * 0.016;
-            if (elapsed > 5) flightData.current = null;
+            const now = performance.now();
+            const elapsed = (now - flightData.current.startTime) / 1000;
+            const gravity = MLB_CONSTANTS.GRAVITY;
+
+            // --- AIR DRAG (Fluid Dynamics Approximation) ---
+            const currentVel = flightData.current.v0.length();
+            if (currentVel > 0.1) {
+                // Realistic drag for a baseball (Cd ~ 0.3)
+                // a_drag = k * v^2 where k ~ 0.005
+                const dragCoeff = 0.005;
+                const dragFactor = dragCoeff * currentVel * dt;
+                flightData.current.v0.x *= (1 - dragFactor);
+                flightData.current.v0.z *= (1 - dragFactor);
+                // Vertical drag is slightly less to preserve "moonshot" feel
+                flightData.current.v0.y *= (1 - dragFactor * 0.9);
+            }
+
+            flightData.current.v0.y += gravity * dt;
+
+            // Apply position updates with the calculated velocity
+            meshRef.current.position.addScaledVector(flightData.current.v0, dt);
+
+            const GROUND_Y = 0.037;
+            if (meshRef.current.position.y < GROUND_Y) {
+                meshRef.current.position.y = GROUND_Y;
+                flightData.current.v0.y *= -0.45;
+                flightData.current.v0.x *= 0.8;
+                flightData.current.v0.z *= 0.8;
+
+                if (Math.abs(flightData.current.v0.y) < 0.2) {
+                    flightData.current.v0.y = 0;
+                    if (!hasCalledSettled.current) {
+                        hasCalledSettled.current = true;
+                        if (onSettled) onSettled();
+                    }
+                }
+            }
+
+            if ((meshRef.current.position.z < -127 || Math.abs(meshRef.current.position.x) > 85) && !hasCalledSettled.current) {
+                hasCalledSettled.current = true;
+                setTimeout(() => { if (onSettled) onSettled(); }, 1200);
+            }
+
+            if (elapsed > 8) {
+                flightData.current = null;
+                setShowTrail(false);
+                if (!hasCalledSettled.current) {
+                    hasCalledSettled.current = true;
+                    if (onSettled) onSettled();
+                }
+            }
         }
     });
 
@@ -223,22 +318,46 @@ export function Ball({
     };
 
     const initFlight = (res: PitchResult) => {
-        const speedMs = (res.exitVelocity! * MLB_CONSTANTS.MPH_TO_MS);
-        const angleRad = (res.launchAngle! * Math.PI) / 180;
+        const ev = res.exitVelocity || 70;
+        const la = res.launchAngle || 20;
+        const speedMs = (ev * MLB_CONSTANTS.MPH_TO_MS);
+        const angleRad = (la * Math.PI) / 180;
         const timing = res.timingOffset || 0;
 
         // Handedness multiplier for spray angle
-        // Righty: Early (<0) is Left Field (<0), Late (>0) is Right Field (>0)
-        // Lefty: Early (<0) is Right Field (>0), Late (>0) is Left Field (<0)
         const sideMult = (teamStats.handedness === 'RIGHT') ? 1 : -1;
-        const sprayAngle = (timing / 150) * (Math.PI / 3.5) * sideMult;
+
+        // Heavily exaggerated spray for foul balls to ensure they shoot off-screen
+        let sprayAngle;
+        if (res.type === 'FOUL') {
+            // Foul balls now shoot at steep angles (70-85 degrees) away from the plate
+            const foulBase = (Math.PI / 2.1);
+            const timingVariance = (timing / 100) * (Math.PI / 6);
+            sprayAngle = (foulBase * sideMult) + timingVariance;
+        } else {
+            sprayAngle = (timing / 150) * (Math.PI / 3.5) * sideMult;
+        }
+
+        // Initial velocity with air drag consideration (scaled for visual 108m fence)
+        let dragScale = 0.92;
+
+        // --- OUT PROTECTION ---
+        // If it's a fly out, ensure it visually dies before the warning track (Fence at 122m)
+        if (res.type === 'OUT' && la > 15) {
+            const vms = speedMs;
+            const theoreticalDist = (vms * vms * Math.sin(2 * angleRad)) / Math.abs(MLB_CONSTANTS.GRAVITY);
+            if (theoreticalDist > 120) {
+                // Scale velocity down so it lands around 110m (short of the fence)
+                dragScale = Math.sqrt(110 / theoreticalDist);
+            }
+        }
 
         flightData.current = {
             startTime: performance.now(),
             v0: new THREE.Vector3(
-                Math.sin(sprayAngle) * speedMs * Math.cos(angleRad),
-                speedMs * Math.sin(angleRad),
-                -Math.cos(sprayAngle) * speedMs * Math.cos(angleRad)
+                Math.sin(sprayAngle) * speedMs * Math.cos(angleRad) * dragScale,
+                speedMs * Math.sin(angleRad) * dragScale,
+                -Math.cos(sprayAngle) * speedMs * Math.cos(angleRad) * dragScale
             )
         };
     };
@@ -246,8 +365,7 @@ export function Ball({
     if (state === 'idle' || state === 'windup') return null;
 
     const ballMesh = (
-        <mesh ref={meshRef}>
-            <sphereGeometry args={[MLB_CONSTANTS.BALL_RADIUS * 1.5, 32, 32]} />
+        <mesh ref={meshRef} geometry={BALL_GEOM}>
             <meshStandardMaterial color="#fff" emissive={ballColor} emissiveIntensity={2} />
         </mesh>
     );
@@ -255,23 +373,15 @@ export function Ball({
 
     return (
         <group>
-            {showTrail ? (
+            {ballMesh}
+            {showTrail && (
                 <Trail
-                    width={0.15} // Extra sharp
-                    length={20}
+                    width={0.25}
+                    length={40}
                     color={ballColor}
-                    attenuation={(t) => t * t * t * t}
-                    opacity={0.8}
-                    transparent
-                >
-                    {ballMesh}
-                </Trail>
-            ) : ballMesh}
-
-
-
-
-
+                    attenuation={(t) => t * t}
+                />
+            )}
         </group>
     );
 }
