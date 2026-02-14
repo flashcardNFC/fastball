@@ -231,14 +231,7 @@ export default function BaseballGame({ skipTeamCreation = false, skipStartScreen
 
         if (result.status === 'hit' || result.type === 'OUT' || result.type === 'FOUL') {
             setMachineState('flight');
-
-            // --- FOUL PACING ---
-            // Force reset after 700ms for fouls so we don't wait for the ball to fly miles away
-            if (result.type === 'FOUL') {
-                setTimeout(() => {
-                    handleSettled();
-                }, 700);
-            }
+            // Wait for handleSettled signal from the Ball component
         } else {
             setMachineState('result');
             setTimeout(() => processResult(result), 1500);
@@ -255,7 +248,7 @@ export default function BaseballGame({ skipTeamCreation = false, skipStartScreen
             if (result.type === 'BALL') {
                 balls++;
                 if (balls === 4) {
-                    const walk = advanceRunners(r, 'SINGLE');
+                    const walk = advanceRunners(r, 'WALK');
                     r = walk.runners as [boolean, boolean, boolean];
                     runs += walk.runs;
                     balls = 0; strikes = 0;
@@ -325,14 +318,26 @@ export default function BaseballGame({ skipTeamCreation = false, skipStartScreen
     }, [gameState.balls, gameState.strikes, gameState.outs, gameState.inning, gameState.isTop, gameState.score, gameState.runners, maxInnings]);
 
     const handleSettled = useCallback(() => {
-        // Only process if we are still in flight mode to prevent double-processing (e.g. timeout + physics bounce)
-        if (pitchResult && machineState === 'flight') {
+        if (pitchResult) {
             processResult(pitchResult);
         }
-    }, [pitchResult, processResult, machineState]);
+    }, [pitchResult, processResult]);
 
-    const advanceRunners = (r: [boolean, boolean, boolean], type: 'SINGLE' | 'DOUBLE' | 'TRIPLE' | 'HOMERUN') => {
+    const advanceRunners = (r: [boolean, boolean, boolean], type: 'SINGLE' | 'DOUBLE' | 'TRIPLE' | 'HOMERUN' | 'WALK') => {
         let runs = 0;
+        if (type === 'WALK') {
+            if (r[0]) {
+                if (r[1]) {
+                    if (r[2]) {
+                        runs++;
+                    }
+                    r[2] = true;
+                }
+                r[1] = true;
+            }
+            r[0] = true;
+            return { runners: r, runs };
+        }
         if (type === 'HOMERUN') {
             runs = r.filter(x => x).length + 1;
             return { runners: [false, false, false], runs };
@@ -434,8 +439,8 @@ export default function BaseballGame({ skipTeamCreation = false, skipStartScreen
     useEffect(() => {
         if (machineState === 'idle' && gameStarted && !gameState.gameOver) {
             const timeSinceSideChange = performance.now() - sideChangeTimeRef.current;
-            // If side change happened recently (within last 3s), wait 3s, otherwise standard 1s
-            const delay = timeSinceSideChange < 3000 ? 3000 : 1000;
+            // If side change happened recently (within last 3s), wait 3s, otherwise standard 1.5s
+            const delay = timeSinceSideChange < 3000 ? 3000 : 1500;
             const timer = setTimeout(() => startPitch(), delay);
             return () => clearTimeout(timer);
         }
@@ -643,7 +648,7 @@ export default function BaseballGame({ skipTeamCreation = false, skipStartScreen
                     gl={{ antialias: false, powerPreference: 'high-performance' }}
                     camera={{ fov: 75 }}
                 >
-                    <Camera isUserPitching={!gameState.isTop} machineState={machineState} ballRef={gameBallRef} pitchResult={pitchResult} />
+                    <Camera isUserPitching={!gameState.isTop} machineState={machineState} ballRef={gameBallRef} />
 
                     <color attach="background" args={['#020408']} />
                     <fog attach="fog" args={['#020408', 30, 250]} />
@@ -726,7 +731,50 @@ export default function BaseballGame({ skipTeamCreation = false, skipStartScreen
                 </div>
             )}
 
-            {showBracket && tournament && <div style={{ position: 'absolute', inset: 0, zIndex: 400 }}><TournamentBracket tournament={tournament} onCompleteTournament={handleCompleteTournament} onPlayMatch={(matchId) => { const m = tournament.matches.find((x: Match) => x.id === matchId); if (m) { const oppId = m.team1Id === 'user' ? m.team2Id : m.team1Id; const opp = tournament.teams.find((t: Team) => t.id === oppId); setOpponentTeam(opp ? { ...opp.stats, name: opp.name } : null); setGameState({ ...gameState, inning: 1, isTop: true, outs: 0, score: { player: 0, computer: 0 }, runners: [false, false, false], gameOver: false, pitcherHandedness: Math.random() > 0.5 ? 'RIGHT' : 'LEFT' }); setGameStarted(true); setShowBracket(false); } }} onSimulateMatch={(matchId: string) => { setTournament((prev: any) => { if (!prev) return null; const m = prev.matches.find((x: Match) => x.id === matchId); if (!m || !m.team1Id || !m.team2Id) return prev; const t1 = prev.teams.find((t: Team) => t.id === m.team1Id); const t2 = prev.teams.find((t: Team) => t.id === m.team2Id); const result = simulateOutcome(m, t1, t2); const updated = prev.matches.map((x: Match) => x.id === matchId ? { ...x, winnerId: result.winnerId, score: result.score } : x); const final = updated.map((match: Match) => { if (match.id === m.nextMatchId) { if (!match.team1Id) return { ...match, team1Id: result.winnerId }; if (!match.team2Id) return { ...match, team2Id: result.winnerId }; } if (match.id === m.loserMatchId) { const loserId = result.winnerId === m.team1Id ? m.team2Id : m.team1Id; if (!match.team1Id) return { ...match, team1Id: loserId }; if (!match.team2Id) return { ...match, team2Id: loserId }; } return match; }); return { ...prev, matches: final }; }); }} /></div>}
+            {showBracket && tournament && (
+                <div style={{ position: 'absolute', inset: 0, zIndex: 400 }}>
+                    <TournamentBracket
+                        tournament={tournament}
+                        onCompleteTournament={handleCompleteTournament}
+                        onClose={() => setShowBracket(false)}
+                        onPlayMatch={(matchId) => {
+                            const m = tournament.matches.find((x: Match) => x.id === matchId);
+                            if (m) {
+                                const oppId = m.team1Id === 'user' ? m.team2Id : m.team1Id;
+                                const opp = tournament.teams.find((t: Team) => t.id === oppId);
+                                setOpponentTeam(opp ? { ...opp.stats, name: opp.name } : null);
+                                setGameState({ ...gameState, inning: 1, isTop: true, outs: 0, score: { player: 0, computer: 0 }, runners: [false, false, false], gameOver: false, pitcherHandedness: Math.random() > 0.5 ? 'RIGHT' : 'LEFT' });
+                                setGameStarted(true);
+                                setShowBracket(false);
+                            }
+                        }}
+                        onSimulateMatch={(matchId: string) => {
+                            setTournament((prev: any) => {
+                                if (!prev) return null;
+                                const m = prev.matches.find((x: Match) => x.id === matchId);
+                                if (!m || !m.team1Id || !m.team2Id) return prev;
+                                const t1 = prev.teams.find((t: Team) => t.id === m.team1Id);
+                                const t2 = prev.teams.find((t: Team) => t.id === m.team2Id);
+                                const result = simulateOutcome(m, t1, t2);
+                                const updated = prev.matches.map((x: Match) => x.id === matchId ? { ...x, winnerId: result.winnerId, score: result.score } : x);
+                                const final = updated.map((match: Match) => {
+                                    if (match.id === m.nextMatchId) {
+                                        if (!match.team1Id) return { ...match, team1Id: result.winnerId };
+                                        if (!match.team2Id) return { ...match, team2Id: result.winnerId };
+                                    }
+                                    if (match.id === m.loserMatchId) {
+                                        const loserId = result.winnerId === m.team1Id ? m.team2Id : m.team1Id;
+                                        if (!match.team1Id) return { ...match, team1Id: loserId };
+                                        if (!match.team2Id) return { ...match, team2Id: loserId };
+                                    }
+                                    return match;
+                                });
+                                return { ...prev, matches: final };
+                            });
+                        }}
+                    />
+                </div>
+            )}
 
             {!gameStarted && !showTeamCreation && (
                 <StartScreen
@@ -747,7 +795,40 @@ export default function BaseballGame({ skipTeamCreation = false, skipStartScreen
                 />
             )}
 
-            {!gameState.isTop && machineState === 'idle' && !gameState.gameOver && gameStarted && <div style={{ position: 'absolute', bottom: '10%', left: '50%', transform: 'translateX(-50%)', zIndex: 100 }}><button onClick={simulateInning} style={{ padding: '16px 32px', backgroundColor: 'rgba(255,255,255,0.1)', backdropFilter: 'blur(20px)', color: '#fff', border: '1px solid rgba(255,255,255,0.2)', borderRadius: '16px', fontWeight: 900, cursor: 'pointer' }}>SIMULATE INNING</button></div>}
+            {!gameState.isTop && machineState === 'idle' && !gameState.gameOver && gameStarted && (
+                <div style={{ position: 'absolute', bottom: '10%', left: '50%', transform: 'translateX(-50%)', zIndex: 100 }}>
+                    <button onClick={simulateInning} style={{ padding: '16px 32px', backgroundColor: 'rgba(255,255,255,0.1)', backdropFilter: 'blur(20px)', color: '#fff', border: '1px solid rgba(255,255,255,0.2)', borderRadius: '16px', fontWeight: 900, cursor: 'pointer' }}>SIMULATE INNING</button>
+                </div>
+            )}
+
+            {machineState === 'flight' && pitchResult && (pitchResult.type === 'OUT' || pitchResult.type === 'FOUL') && (
+                <div style={{ position: 'absolute', bottom: '15dvh', left: '50%', transform: 'translateX(-50%)', zIndex: 200 }}>
+                    <button
+                        onClick={handleSettled}
+                        style={{
+                            padding: '14px 28px',
+                            backgroundColor: 'rgba(255,255,255,0.15)',
+                            backdropFilter: 'blur(30px)',
+                            color: '#fff',
+                            border: '2px solid rgba(255,255,255,0.3)',
+                            borderRadius: '100px',
+                            fontWeight: 900,
+                            cursor: 'pointer',
+                            fontSize: '14px',
+                            letterSpacing: '0.1em',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '10px',
+                            animation: ' fadeInUp 0.3s ease-out'
+                        }}
+                    >
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z" />
+                        </svg>
+                        NEXT AB
+                    </button>
+                </div>
+            )}
 
             {gameState.gameOver && <div style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.95)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200, backdropFilter: 'blur(30px)' }}><div style={{ textAlign: 'center' }}><div style={{ fontSize: isMobile ? '120px' : '180px', fontWeight: 900, lineHeight: 1 }}>{gameState.score.player} - {gameState.score.computer}</div><div style={{ fontSize: '40px', fontWeight: 900, opacity: 0.5 }}>FINAL SCORE</div>{tournament ? <button onClick={() => { const userWon = gameState.score.player > gameState.score.computer; setTournament((prev: any) => { if (!prev) return null; const activeMatch = prev.matches.find((m: Match) => !m.winnerId && (m.team1Id === 'user' || m.team2Id === 'user')); if (!activeMatch) return prev; const winnerId = userWon ? 'user' : (activeMatch.team1Id === 'user' ? activeMatch.team2Id : activeMatch.team1Id); const loserId = userWon ? (activeMatch.team1Id === 'user' ? activeMatch.team2Id : activeMatch.team1Id) : 'user'; const updated = prev.matches.map((match: Match) => match.id === activeMatch.id ? { ...match, winnerId, score: { t1: gameState.score.player, t2: gameState.score.computer } } : match); const final = updated.map((match: Match) => { if (match.id === activeMatch.nextMatchId) { if (!match.team1Id) return { ...match, team1Id: winnerId }; if (!match.team2Id) return { ...match, team2Id: winnerId }; } if (match.id === activeMatch.loserMatchId) { if (!match.team1Id) return { ...match, team1Id: loserId }; if (!match.team2Id) return { ...match, team2Id: loserId }; } return match; }); return { ...prev, matches: final }; }); setGameStarted(false); setShowBracket(true); }} style={{ marginTop: '60px', padding: '24px 64px', backgroundColor: '#fff', color: '#000', borderRadius: '100px', fontSize: '24px', fontWeight: 900, cursor: 'pointer' }}>{gameState.score.player > gameState.score.computer ? 'VICTORY - CONTINUE' : 'DEFEAT - CONTINUE'}</button> : <button onClick={() => window.location.reload()} style={{ marginTop: '60px', padding: '24px 64px', backgroundColor: '#fff', color: '#000', borderRadius: '100px', fontSize: '24px', fontWeight: 900, cursor: 'pointer' }}>REMATCH</button>}</div></div>}
 

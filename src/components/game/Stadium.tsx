@@ -11,9 +11,8 @@ import { MLB_CONSTANTS } from '../../lib/constants';
 const BULB_GEOM = new THREE.PlaneGeometry(0.75, 0.75);
 const STRIPE_GEOM = new THREE.PlaneGeometry(150, 5);
 const MOUND_GEOM = new THREE.CylinderGeometry(0.8, 2.75, 0.25, 16);
-const DIRT_GEOM = new THREE.CircleGeometry(29.5, 48);
-const INFIELD_GEOM = new THREE.CircleGeometry(21.5, 48);
-const HOME_DIRT_GEOM = new THREE.CircleGeometry(8.2, 32);
+const DIRT_GEOM = new THREE.CircleGeometry(28, 32);
+const INFIELD_GEOM = new THREE.CircleGeometry(20, 32);
 const PITCHER_BODY_GEOM = new THREE.CapsuleGeometry(0.22, 0.8, 2, 4);
 const PITCHER_HEAD_GEOM = new THREE.SphereGeometry(0.18, 8, 8);
 const PITCHER_LIMB_GEOM = new THREE.CapsuleGeometry(0.09, 0.8, 2, 4);
@@ -22,7 +21,7 @@ const BOX_GEOM = new THREE.BoxGeometry(1, 1, 1);
 const PLANE_GEOM = new THREE.PlaneGeometry(1, 1);
 const FENCE_GEOM = new THREE.BoxGeometry(200, 8, 2);
 const RUBBER_GEOM = new THREE.PlaneGeometry(0.6, 0.15);
-const FOUL_LINE_GEOM = new THREE.PlaneGeometry(0.12, 180);
+const FOUL_LINE_GEOM = new THREE.PlaneGeometry(0.2, 180);
 const BATTER_BOX_GEOM = new THREE.PlaneGeometry(0.8, 1.2);
 const BATTER_BORDER_H_GEOM = new THREE.PlaneGeometry(0.82, 0.05);
 const BATTER_BORDER_V_GEOM = new THREE.PlaneGeometry(0.05, 1.25);
@@ -34,7 +33,7 @@ const BULB_MAT = new THREE.MeshStandardMaterial({
     emissiveIntensity: 10,
     toneMapped: false
 });
-const DARK_MAT = new THREE.MeshStandardMaterial({ color: "#143314", roughness: 1 });
+const DARK_MAT = new THREE.MeshStandardMaterial({ color: "#1e441e", roughness: 1 });
 const LIGHT_MAT = new THREE.MeshStandardMaterial({ color: "#1a3c1a", roughness: 1 });
 const DIRT_MAT = new THREE.MeshStandardMaterial({ color: "#5d4037", roughness: 1 });
 const MOUND_MAT = new THREE.MeshStandardMaterial({ color: "#5d4037", roughness: 0.9 });
@@ -45,9 +44,9 @@ const FENCE_MAT = new THREE.MeshStandardMaterial({ color: "#17320b" });
 const TOWER_MAT = new THREE.MeshStandardMaterial({ color: "#1a1a1a", metalness: 0.9, roughness: 0.1 });
 const PANEL_MAT = new THREE.MeshStandardMaterial({ color: "#111", metalness: 0.8, roughness: 0.2 });
 const GLOW_MAT = new THREE.MeshBasicMaterial({ color: "#ffffff", transparent: true, opacity: 0.15, blending: THREE.AdditiveBlending, depthWrite: false });
-const FOUL_MAT = new THREE.MeshBasicMaterial({ color: "#ffffff", transparent: true, opacity: 0.8 });
+const FOUL_MAT = new THREE.MeshBasicMaterial({ color: "#ffffff", transparent: false, depthWrite: true });
 const BOX_GHOST_MAT = new THREE.MeshBasicMaterial({ color: "#fff", transparent: true, opacity: 0.05 });
-const BOX_CHALK_MAT = new THREE.MeshBasicMaterial({ color: "#ffffff", transparent: true, opacity: 0.8 });
+const BOX_CHALK_MAT = new THREE.MeshBasicMaterial({ color: "#ffffff", transparent: true, opacity: 0.3 });
 
 const Pitcher = React.memo(({ machineState, windupStartTime, handedness }: { machineState: string, windupStartTime: number, handedness: 'LEFT' | 'RIGHT' }) => {
     const groupRef = useRef<THREE.Group>(null);
@@ -178,14 +177,14 @@ export const Stadium = React.memo(({ machineState, windupStartTime, pitcherHande
         const lines: THREE.BufferGeometry[] = [];
 
         // Batter's Boxes Borders
-        [0.7, -0.7].forEach((side) => {
-            [0.6, -0.6].forEach((z) => {
+        [0.7, -0.7].map((side) => {
+            [0.6, -0.6].map((z) => {
                 const h = BATTER_BORDER_H_GEOM.clone();
                 h.applyMatrix4(new THREE.Matrix4().makeRotationX(-Math.PI / 2));
                 h.translate(side, 0.011, z);
                 lines.push(h);
             });
-            [0.4, -0.4].forEach((x) => {
+            [0.4, -0.4].map((x) => {
                 const v = BATTER_BORDER_V_GEOM.clone();
                 v.applyMatrix4(new THREE.Matrix4().makeRotationX(-Math.PI / 2));
                 v.translate(side + x, 0.011, 0);
@@ -198,70 +197,40 @@ export const Stadium = React.memo(({ machineState, windupStartTime, pitcherHande
 
     return (
         <group>
-            {/* 1. Main Outfield Grass Base */}
+            {/* Grass Base */}
             <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.1, -25]} receiveShadow>
-                <planeGeometry args={[200, 300]} />
+                <planeGeometry args={[150, 250]} />
                 <meshStandardMaterial color="#1a3c1a" roughness={1} />
             </mesh>
 
-            {/* 2. Mowing Patterns (Stripes) */}
             <Instances geometry={STRIPE_GEOM} material={DARK_MAT}>
-                {[...Array(15)].map((_, i) => (
+                {[...Array(10)].map((_, i) => (
                     <Instance
                         key={i}
-                        position={[0, -0.095, -(i * 2) * 10 + 20]}
+                        position={[0, -0.095, -(i * 2) * 10 - 10]}
                         rotation={[-Math.PI / 2, 0, 0]}
                     />
                 ))}
             </Instances>
             <Instances geometry={STRIPE_GEOM} material={LIGHT_MAT}>
-                {[...Array(15)].map((_, i) => (
+                {[...Array(10)].map((_, i) => (
                     <Instance
                         key={i}
-                        position={[0, -0.095, -(i * 2 + 1) * 10 + 20]}
+                        position={[0, -0.095, -(i * 2 + 1) * 10 - 10]}
                         rotation={[-Math.PI / 2, 0, 0]}
                     />
                 ))}
             </Instances>
 
-            {/* 3. Infield Dirt Area (Centered on Mound) */}
-            <mesh
-                rotation={[-Math.PI / 2, 0, 0]}
-                position={[0, -0.09, -MLB_CONSTANTS.DISTANCE_MOUND_TO_PLATE]}
-                geometry={DIRT_GEOM}
-                material={DIRT_MAT}
-                receiveShadow
-            />
-
-            {/* 4. Infield Grass Island (Centered on Mound) */}
-            <mesh
-                rotation={[-Math.PI / 2, 0, 0]}
-                position={[0, -0.088, -MLB_CONSTANTS.DISTANCE_MOUND_TO_PLATE]}
-                geometry={INFIELD_GEOM}
-                material={LIGHT_MAT}
-                receiveShadow
-            />
-
-            {/* 5. Home Plate Dirt Circle */}
-            <mesh
-                rotation={[-Math.PI / 2, 0, 0]}
-                position={[0, -0.089, 0]}
-                geometry={HOME_DIRT_GEOM}
-                material={DIRT_MAT}
-                receiveShadow
-            />
-
-            {/* 6. Warning Track & Outer Wall Area */}
-            <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.098, -135]} geometry={PLANE_GEOM} scale={[250, 40, 1]} material={DIRT_MAT} />
+            <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.09, -5]} geometry={DIRT_GEOM} material={DIRT_MAT} receiveShadow />
+            <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.098, -122]} geometry={PLANE_GEOM} scale={[200, 20, 1]} material={DIRT_MAT} />
             <mesh position={[0, 4, -122]} geometry={FENCE_GEOM} material={FENCE_MAT} />
 
-            {/* 7. Pitcher's Mound Group */}
             <group position={[0, 0, -MLB_CONSTANTS.DISTANCE_MOUND_TO_PLATE]}>
                 <mesh position={[0, 0.1, 0]} geometry={MOUND_GEOM} material={DIRT_MAT} receiveShadow />
                 <mesh position={[0, 0.226, 0]} rotation={[-Math.PI / 2, 0, 0]} geometry={RUBBER_GEOM} material={WHITE_MAT} />
-                {/* Mound Dirt Circle (The "Pit") */}
-                <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.012, 0]} material={DIRT_MAT}>
-                    <circleGeometry args={[2.74, 32]} />
+                <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.01, 0]} material={DIRT_MAT}>
+                    <circleGeometry args={[3.0, 16]} />
                 </mesh>
             </group>
 
@@ -279,23 +248,13 @@ export const Stadium = React.memo(({ machineState, windupStartTime, pitcherHande
 
             <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.085, -28]} geometry={INFIELD_GEOM} material={LIGHT_MAT} receiveShadow />
 
-            {/* RESTORED FOUL LINES - Anchored to outside corners of batter's boxes */}
-            <group position={[0, 0.01, 0]}>
-                <mesh
-                    rotation={[-Math.PI / 2, 0, -Math.PI / 4]}
-                    position={[1.11 + 63.63, -0.08, -0.61 - 63.63]}
-                    geometry={FOUL_LINE_GEOM}
-                    material={FOUL_MAT}
-                />
-                <mesh
-                    rotation={[-Math.PI / 2, 0, Math.PI / 4]}
-                    position={[-1.11 - 63.63, -0.08, -0.61 - 63.63]}
-                    geometry={FOUL_LINE_GEOM}
-                    material={FOUL_MAT}
-                />
+            {/* RESTORED HIGH-VISIBILITY FOUL LINES */}
+            <group position={[0, 0.012, 0]}>
+                <mesh rotation={[-Math.PI / 2, 0, -Math.PI / 4]} position={[63.64, 0, -63.64]} geometry={FOUL_LINE_GEOM} material={FOUL_MAT} />
+                <mesh rotation={[-Math.PI / 2, 0, Math.PI / 4]} position={[-63.64, 0, -63.64]} geometry={FOUL_LINE_GEOM} material={FOUL_MAT} />
             </group>
 
-            {/* Render batter box chalk markings in one draw call */}
+            {/* Render batter box chalk markings */}
             <mesh geometry={batterBoxChalkGeom} material={BOX_CHALK_MAT} />
 
             {/* Batter's Box Semi-transparent Ghost Areas (Still separate for blending) */}
